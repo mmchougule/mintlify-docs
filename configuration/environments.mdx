@@ -1,0 +1,168 @@
+---
+title: "Configure b402 for mainnet, devnet, and localnet"
+description: "Configure b402 for mainnet production use, devnet testing with mock adapters, or localnet development against a local Solana validator."
+---
+
+b402 supports three environments: `mainnet` for live production use with real funds, `devnet` for integration testing against the deployed pool with no financial risk, and `localnet` for fully offline development against a local Solana validator. You switch between them by changing the `cluster` field in the `B402Solana` constructor — or, for the MCP server, by setting the `B402_CLUSTER` environment variable.
+
+## Environments
+
+<Tabs>
+  <Tab title="Mainnet">
+    The `mainnet` cluster connects to the live b402 pool on Solana mainnet-beta. All operations use real funds. The hosted relayer and indexer are active, Jupiter routing is available, and the Kamino USDC reserve is live.
+
+    **What's available:**
+    - Jupiter v6 adapter: private swaps on any Jupiter route
+    - Kamino adapter: `lend` and `redeem` on the USDC reserve
+    - Hosted relayer: pays gas for `unshield`, `swap`, `lend`, `redeem`
+    - Hosted indexer: Merkle proofs for multi-deposit unshield in any order
+
+    **Hosted service URLs:**
+    - Relayer: `https://b402-solana-relayer-mainnet-62092339396.us-central1.run.app`
+    - Indexer: `https://b402-solana-indexer-api-62092339396.us-central1.run.app`
+
+    ```typescript
+    const b402 = new B402Solana({
+      cluster: 'mainnet',
+      keypair,
+      rpcUrl: process.env.RPC_URL, // private RPC recommended
+    });
+    ```
+
+    <Warning>
+      Mainnet uses real funds. Test your integration on devnet first. The pool enforces a soft TVL cap while the anonymity set grows — deposits may be rejected if the cap is reached.
+    </Warning>
+  </Tab>
+  <Tab title="Devnet">
+    The `devnet` cluster connects to the b402 pool deployed on Solana devnet. It uses the same pool and verifier programs as mainnet, but swaps route through the mock adapter (a constant 2× echo) instead of Jupiter, and Kamino lending is not available. You can airdrop devnet SOL freely.
+
+    **What's available:**
+    - Mock adapter: `swap` returns 2× the input amount (no real AMM liquidity)
+    - Hosted relayer: active on devnet
+    - `solana airdrop` for free devnet SOL
+
+    **What's not available:**
+    - Jupiter routing (Jupiter does not index devnet liquidity)
+    - Kamino lending (`lend` / `redeem` are mainnet-only)
+    - Hosted indexer (no devnet indexer yet)
+
+    **Hosted service URLs:**
+    - Relayer: `https://b402-solana-relayer-devnet-62092339396.us-central1.run.app`
+    - Indexer: none
+
+    ```typescript
+    const b402 = new B402Solana({
+      cluster: 'devnet',
+      keypair,
+      // rpcUrl defaults to api.devnet.solana.com
+    });
+    ```
+
+    ```bash
+    # Get devnet SOL for testing
+    solana airdrop 1 --url devnet
+    ```
+
+    <Note>
+      `private_swap` on devnet uses the mock adapter — it credits 2× the input amount as output without touching any AMM. Use this to test your shield → swap → unshield flow without real liquidity.
+    </Note>
+  </Tab>
+  <Tab title="Localnet">
+    The `localnet` cluster runs against a local Solana test validator with all b402 programs pre-deployed. Use it for fully offline development, CI pipelines, and integration tests where you need deterministic behavior and no network dependency.
+
+    **What's available:**
+    - All b402 programs pre-deployed on the local validator
+    - Mock adapter for swap testing
+    - Full control over validator state (reset between runs)
+
+    **What's not available:**
+    - Hosted relayer (you pay gas yourself via `keypair` or `relayer`)
+    - Hosted indexer
+    - Jupiter or Kamino adapters
+
+    ```bash
+    # Clone the repo and start the local validator (keep this terminal open)
+    git clone https://github.com/mmchougule/b402-solana
+    cd b402-solana
+    ./ops/local-validator.sh --reset
+    ```
+
+    ```typescript
+    const b402 = new B402Solana({
+      cluster: 'localnet',
+      keypair,
+      rpcUrl: 'http://127.0.0.1:8899',
+      // No relayerHttpUrl — keypair pays gas directly
+    });
+    ```
+
+    <Info>
+      `inlineCpiNullifier` defaults to `false` for localnet. Set it to `true` only if you build and deploy the pool program with the inline CPI nullifier option enabled.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Environment comparison
+
+| Feature | Mainnet | Devnet | Localnet |
+|---|---|---|---|
+| Real funds | Yes | No | No |
+| Jupiter routing | Yes | No | No |
+| Kamino lending | Yes | No | No |
+| Mock adapter | No | Yes | Yes |
+| Hosted relayer | Yes | Yes | No |
+| Hosted indexer | Yes | No | No |
+| Free SOL airdrop | No | Yes | Yes |
+| Network required | Yes | Yes | No |
+
+## Switching environments
+
+Change the `cluster` field in the constructor. No other code changes are required — default relayer URLs, indexer URLs, and program IDs are all resolved automatically from the cluster value.
+
+```typescript
+// Switch from devnet to mainnet
+const b402 = new B402Solana({
+  cluster: 'mainnet', // was 'devnet'
+  keypair,
+  rpcUrl: process.env.RPC_URL,
+});
+```
+
+## MCP server environment
+
+The MCP server reads the cluster from the `B402_CLUSTER` environment variable. The default is `mainnet` when the variable is not set.
+
+```bash
+# Install with mainnet (default)
+claude mcp add b402-solana -- npx -y @b402ai/solana-mcp@latest
+
+# Install with devnet for testing
+claude mcp add b402-solana \
+  --env B402_CLUSTER=devnet \
+  -- npx -y @b402ai/solana-mcp@latest
+```
+
+You can also override the RPC endpoint and keypair path:
+
+```bash
+claude mcp add b402-solana \
+  --env B402_CLUSTER=mainnet \
+  --env B402_RPC_URL=https://your-helius-rpc \
+  --env B402_KEYPAIR_PATH=/path/to/your/keypair.json \
+  -- npx -y @b402ai/solana-mcp@latest
+```
+
+| Variable | Default |
+|---|---|
+| `B402_CLUSTER` | `mainnet` |
+| `B402_RPC_URL` | Public RPC for the cluster |
+| `B402_KEYPAIR_PATH` | `~/.config/solana/id.json` |
+| `B402_CIRCUITS_ROOT` | Bundled artifacts inside the package |
+
+## Rate limits and RPC recommendations
+
+The public tier API key baked into the SDK allows 5 requests per minute to the hosted relayer. For production integrations, contact the b402 team for a private key.
+
+<Warning>
+  The public Solana RPC (`api.mainnet-beta.solana.com`) aggressively rate-limits traffic. Any real production integration should use a private RPC endpoint from Helius, Triton, QuickNode, or Alchemy.
+</Warning>

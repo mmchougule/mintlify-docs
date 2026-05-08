@@ -1,0 +1,150 @@
+---
+title: "Withdraw tokens from the b402 pool"
+description: "Unshield any note from the b402 pool to a Solana address. The relayer signs the transaction, so your wallet has no on-chain connection to the recipient."
+---
+
+Unshielding moves tokens from your shielded b402 balance to any public Solana address. The operation burns the note's nullifier on-chain and transfers the underlying tokens to the recipient's associated token account (ATA). Because the relayer signs and pays gas on the withdrawal transaction, there is no on-chain edge connecting your original deposit to this withdrawal — sender and recipient are unlinkable by a chain observer.
+
+## What unshield does
+
+When you call `b402.unshield()`, the SDK:
+
+1. Selects the note to spend (the most recent by default, or one you specify explicitly)
+2. Generates a Groth16 ZK proof that you own the note
+3. Submits the transaction via the hosted relayer — the relayer's key appears as the fee payer, not your wallet
+4. The pool program verifies the proof on-chain, records the nullifier (preventing double-spends), and transfers tokens from the pool vault to the recipient ATA
+
+The recipient's public key is cryptographically bound into the ZK proof via the `recipient_bind` commitment. Even the relayer cannot redirect funds to a different address after you've generated the proof.
+
+## Step-by-step
+
+<Steps>
+  <Step title="Configure the SDK">
+    Instantiate `B402Solana` with your cluster and keypair. Call `ready()` to initialize the wallet and note store.
+
+    ```typescript
+    import { Keypair, PublicKey } from '@solana/web3.js';
+    import { B402Solana } from '@b402ai/solana';
+
+    const b402 = new B402Solana({
+      cluster: 'mainnet',
+      rpcUrl: process.env.RPC_URL!,
+      keypair: yourKeypair,
+    });
+    await b402.ready();
+    ```
+  </Step>
+
+  <Step title="Call b402.unshield()">
+    Pass the recipient public key and the mint you want to withdraw. The SDK selects your most recently shielded note in that mint by default.
+
+    <CodeGroup>
+
+    ```typescript Basic usage
+    const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    const recipientPubkey = new PublicKey('recipient-wallet-address');
+
+    const { signature } = await b402.unshield({
+      to: recipientPubkey,
+      mint: USDC,
+    });
+
+    console.log('Unshield signature:', signature);
+    ```
+
+    ```typescript Spending a specific note
+    // If you have multiple notes and want to spend a specific one,
+    // pass the note object explicitly. You can get notes from b402.holdings().
+    const myNotes = await b402.holdings({ mint: USDC });
+    const specificNote = myNotes[0];  // or whichever note you want
+
+    const { signature } = await b402.unshield({
+      to: recipientPubkey,
+      mint: USDC,
+      note: specificNote,
+    });
+    ```
+
+    </CodeGroup>
+
+    <Note>
+      You do not pay gas. The hosted relayer signs the unshield transaction and covers all fees (typically 5–10k lamports). Gas cost to you is $0.
+    </Note>
+  </Step>
+
+  <Step title="Confirm the result">
+    `b402.unshield()` returns an `UnshieldResult` containing the transaction signature. The call resolves after confirmation, so when the promise settles the tokens are already in the recipient's account.
+
+    ```typescript
+    const result = await b402.unshield({
+      to: recipientPubkey,
+      mint: USDC,
+    });
+
+    console.log('Confirmed:', result.signature);
+    // The recipient's USDC ATA now holds the withdrawn tokens.
+    ```
+  </Step>
+</Steps>
+
+## Sender–recipient unlinkability
+
+No on-chain transaction links your original deposit to this withdrawal. A chain observer can see:
+
+- The pool's vault balance changed
+- The recipient's ATA received tokens
+- The relayer paid the fee
+
+What they cannot see:
+
+- Which deposit funded this withdrawal
+- Your wallet address
+- Any connection between the recipient and the depositor
+
+The Groth16 proof proves you own a valid note without revealing which note you spent or when it was created.
+
+## The recipient_bind commitment
+
+The recipient's public key is embedded into the ZK proof as the `recipient_bind` commitment before the proof is sent to the relayer. This means:
+
+- The relayer cannot change the destination after receiving your proof request
+- If the relayer tries to submit the proof with a different recipient, the on-chain verifier rejects the transaction
+- You have cryptographic guarantees that funds go exactly where you specified
+
+## Automatic ATA creation
+
+If the recipient does not have an associated token account for the mint you're withdrawing, the relayer creates it automatically as part of the transaction. You do not need to pre-create the ATA or pay the ~0.002 SOL rent — the relayer covers it.
+
+<Note>
+  ATA creation adds one extra instruction to the transaction. This is handled transparently; you do not need to change your `unshield()` call.
+</Note>
+
+## Spending specific notes
+
+By default, `b402.unshield()` spends the most recently shielded note in the specified mint. If you have multiple deposits and want to spend a specific one, pass the `note` parameter:
+
+```typescript
+// Get all spendable notes for a mint
+const holdings = await b402.holdings({ mint: USDC });
+
+// Spend a note with a specific leaf index or value
+const targetNote = holdings.find(n => n.amount === '1000000');
+
+await b402.unshield({
+  to: recipientPubkey,
+  mint: USDC,
+  note: targetNote,
+});
+```
+
+You can also pass a custom `recipientAta` if the recipient uses a non-canonical ATA:
+
+```typescript
+const customAta = new PublicKey('custom-ata-address');
+
+await b402.unshield({
+  to: recipientPubkey,
+  mint: USDC,
+  recipientAta: customAta,
+});
+```

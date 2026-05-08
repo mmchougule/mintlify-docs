@@ -1,0 +1,69 @@
+---
+title: "Supported tokens, mints, and operation availability"
+description: "b402 supports USDC and wSOL on Solana mainnet today. Check the whitelisted mint addresses and learn which operations are available per token."
+---
+
+b402 operates a whitelist of token mints that the pool is authorized to accept. An on-chain admin must register each mint in a `TokenConfig` PDA before the pool will accept deposits or execute operations for that token. Today, two mints are live on mainnet — USDC and wrapped SOL — with USDC receiving full support across all operations and wSOL covering swaps but not lending.
+
+## Whitelisted mints
+
+### Mainnet
+
+| Token | Mint address |
+|---|---|
+| USDC | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| wSOL | `So11111111111111111111111111111111111111112` |
+
+### Devnet
+
+| Token | Mint address |
+|---|---|
+| USDC (devnet) | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+
+<Note>
+  wSOL is not separately whitelisted on devnet. The devnet mock adapter accepts USDC as both the input and output token for swap testing.
+</Note>
+
+## Supported operations by token
+
+| Operation | USDC (mainnet) | wSOL (mainnet) |
+|---|---|---|
+| `shield` | Supported | Supported |
+| `swap` | Supported | Supported |
+| `lend` | Supported | Not yet |
+| `redeem` | Supported | Not yet |
+| `unshield` | Supported | Supported |
+
+### USDC
+
+USDC supports all five operations. Private lending routes through the Kamino USDC reserve (`private_lend` deposits into the reserve and mints a kUSDC voucher commitment; `private_redeem` burns the voucher and reshields the underlying USDC). The full flow — shield, swap, lend, redeem, unshield — is live and proven end-to-end on mainnet.
+
+### wSOL
+
+wSOL supports shield, swap, and unshield. Lending is not yet available for wSOL because private lending currently routes only through the Kamino USDC reserve. The Kamino adapter is reserve-generic at the program level; multi-market discovery that would expose wSOL lending is on the roadmap.
+
+<Info>
+  Private swaps between USDC and wSOL work in both directions. You can shield USDC, swap to wSOL, and unshield to any address — or the reverse.
+</Info>
+
+## How whitelisting works
+
+Each accepted mint is registered in a `TokenConfig` program-derived address (PDA) on the b402 pool program. The pool instruction handler checks this PDA before accepting any shield or swap operation — if the mint is not registered, the transaction fails with an `UnknownMint` error.
+
+Only the pool admin can call the `register_token` instruction to add a new mint. This is currently a single-key admin; migration to a 3-of-5 multisig is the next operational milestone.
+
+If you need a token added that is not yet whitelisted, open an issue on the [b402-solana GitHub repository](https://github.com/mmchougule/b402-solana).
+
+## Private lending availability
+
+Private lending (`lend` / `redeem`) is currently USDC-only and targets the main Kamino USDC reserve. The Kamino adapter program itself is reserve-generic — it can route to any Kamino market — but the SDK and MCP server only surface the single USDC reserve today. Each user gets their own Kamino `Obligation` account, derived from their viewing key (`owner_pda` keyed on `outSpendingPub`).
+
+Multi-market discovery across all 182 Kamino markets is on the roadmap and will unlock lending for additional whitelisted tokens once registered.
+
+<Note>
+  The first time you call `lend` with a given viewing key and mint, Kamino requires a one-time account initialization that costs approximately 0.04 SOL (~$7) for `UserMetadata` and `Obligation` rent. This rent is refundable via Kamino's `close_obligation` instruction once you have fully redeemed the position.
+</Note>
+
+## TVL cap
+
+b402 enforces a soft TVL cap on the pool while the anonymity set grows. Deposits may be rejected if the cap is reached. The cap will be lifted and replaced by a hard cap in `PoolConfig` before deposits are promoted to the broader community.

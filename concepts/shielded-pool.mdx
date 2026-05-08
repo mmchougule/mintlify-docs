@@ -1,0 +1,107 @@
+---
+title: "How the b402 shielded pool works"
+description: "The b402 shielded pool stores token balances as encrypted UTXO commitments in a Merkle tree, verified by Groth16 proofs on Solana mainnet."
+---
+
+The b402 shielded pool is an Anchor program on Solana mainnet that stores token balances as cryptographic commitments in a Merkle tree. Instead of recording "Alice holds 100 USDC," the pool records an opaque hash — a commitment — that proves a valid note exists without revealing who owns it or when it was created. Spending a note requires a Groth16 zero-knowledge proof that demonstrates ownership without identifying the spender.
+
+## UTXO model and notes
+
+b402 uses a UTXO model. Every shield creates a "note" — a discrete unit of value with a single owner. Notes are not updated; they are created and spent.
+
+When you shield tokens, the pool appends a **commitment** to the Merkle tree:
+
+```
+commitment = Poseidon(tag, mint, amount, random, spendingPub)
+```
+
+- `mint` — the SPL token mint address
+- `amount` — the token amount
+- `random` — a random blinding factor you generate client-side
+- `spendingPub` — your spending public key, derived from your viewing key
+- `tag` — a domain separator constant baked into the circuit
+
+The commitment is stored on-chain and visible to everyone. Its contents — who owns it and for how much — are visible only to whoever holds the corresponding `spendingPriv` key.
+
+<Info>
+  The commitment is not your note. Your note is the tuple `(mint, amount, random, spendingPriv)` that lets you open and spend the commitment. The SDK stores this locally in a `NoteStore`. Don't lose it — there is no on-chain recovery path for a lost note.
+</Info>
+
+## The Merkle tree
+
+All commitments live in a single Poseidon Merkle tree:
+
+| Property | Value |
+|---|---|
+| Capacity | 2^26 leaves (~67 million notes) |
+| Depth | 26 levels |
+| Hash function | Poseidon (ZK-friendly, same as the circuit) |
+| Frontier storage | On-chain in `TreeState` PDA (zero-copy, no memcpy) |
+| Root history | 128-entry ring buffer |
+
+The 128-entry root ring is what makes concurrent shields work correctly. If multiple shields land in the same block, each uses the root that was valid when its proof was generated. The pool accepts any root that appears in the ring.
+
+When you want to spend a note, you generate a Merkle proof showing that your commitment is a leaf in the tree at a known root. This proof is part of the ZK witness — you prove you know the opening of a commitment that's in the tree, without saying which leaf.
+
+## Spending a note: nullifiers
+
+Spending a note requires you to reveal a **nullifier** — a value derived from your note's secret data:
+
+```
+nullifier = Poseidon(tag, spendingPriv, leaf_index, random)
+```
+
+The nullifier is cryptographically unlinkable from the commitment. An observer who sees the nullifier on-chain cannot determine which commitment it came from.
+
+The pool maintains a **nullifier set** stored in sharded PDAs. Before accepting a spend, the pool checks that the nullifier has not been seen before. If it has, the transaction fails with `NullifierAlreadySpent`. Once inserted, the nullifier can never be removed — it permanently marks the note as spent.
+
+<Note>
+  The nullifier is published on-chain when you spend. This reveals *that* a note was spent, but not *which* note or *who* owned it. The link between the commitment (created at shield time) and the nullifier (revealed at spend time) exists only inside your local `NoteStore`.
+</Note>
+
+## The ZK proof
+
+Every spend — whether a plain unshield or a DeFi adapter call — includes a Groth16 proof generated client-side using snarkjs. The proof demonstrates:
+
+1. You know the secret opening of a commitment that is a leaf in the Merkle tree
+2. The nullifier you're publishing is correctly derived from that commitment
+3. The amounts balance (inputs = outputs + public amount)
+4. The recipient or adapter binding matches the public input committed in the proof
+
+The on-chain verifier program (`Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK` for the `transact` circuit) checks the proof against a baked-in verification key using Solana's built-in BN254 pairing syscalls. No trusted party is involved in verification — it's purely arithmetic.
+
+## Adapter flow: adapt_execute
+
+DeFi operations (swaps, lending) use a second circuit — the `adapt` circuit — which extends the transact circuit with additional public inputs:
+
+- `adapter_id` — the registered adapter program's address
+- `action_hash` — a hash of the specific DeFi operation parameters
+- `expected_out_mint` and `expected_out_value` — post-CPI balance delta bounds
+
+The pool dispatches to the adapter via CPI, then checks that the vault balance changed by at least `expected_out_value`. If the adapter misbehaves or the route returns less than expected, the transaction fails. This is what makes adapter execution trust-minimized: the adapter can't silently drain the vault.
+
+```
+pool → adapter (CPI) → DeFi protocol (CPI)
+      ↑
+      verifier CPI (Groth16, adapt circuit)
+      post-CPI delta check
+```
+
+## Address Lookup Table (ALT)
+
+Solana v0 transactions are capped at 1,232 bytes. An `adapt_execute` call needs to reference many accounts: the pool program, both verifier programs, USDC and wSOL mints, system and token programs, vaults, the adapter, and the DeFi protocol's accounts.
+
+The b402 Address Lookup Table (`9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj`) compresses 16 frequently-used accounts from 32-byte inline pubkeys to 1-byte ALT indexes. This is what makes `adapt_execute` fit in a single v0 transaction.
+
+Adding support for a new DeFi protocol means extending the ALT with that protocol's accounts. The transaction wire format stays compact.
+
+## Compute unit usage
+
+| Operation | Compute units | Budget headroom |
+|---|---|---|
+| Shield | ~233,495 CU | ~83% free |
+| Unshield | ~223,413 CU | ~84% free |
+| `adapt_execute` (Groth16 + adapter CPI) | ~313,725 CU | ~78% free |
+| Verifier CPI alone (`verifier_adapt`) | ~178,000 CU | — |
+
+Solana's per-transaction limit is 1,400,000 CU. Even the heaviest flow b402 ships today uses under 25% of the budget. The tightest real constraint is transaction size, not compute — which is why the ALT matters.

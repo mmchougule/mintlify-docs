@@ -1,0 +1,54 @@
+---
+title: "b402: Private DeFi SDK for Solana"
+description: "b402 lets you add private swaps, lending, and transfers to any Solana app. Shield tokens once, then trade or lend without your wallet appearing on-chain."
+---
+
+b402 is a TypeScript SDK and MCP server that brings shielded DeFi to Solana. Once you shield tokens into the b402 pool, you can swap via Jupiter, lend on Kamino, and withdraw to any address — all without your wallet appearing on the relevant transactions. A hosted relayer pays gas on your behalf, so only the initial shield requires your signature.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Shield tokens and make your first private swap in under five minutes.
+  </Card>
+  <Card title="SDK Methods" icon="code" href="/reference/sdk-methods">
+    Full reference for the B402Solana class and every public method.
+  </Card>
+  <Card title="MCP Agent Tools" icon="robot" href="/reference/mcp-tools">
+    Use b402 directly from Claude Code or Cursor with the MCP server.
+  </Card>
+  <Card title="Privacy Model" icon="shield-halved" href="/concepts/privacy-model">
+    Understand what b402 hides, what it reveals, and how the ZK proofs work.
+  </Card>
+</CardGroup>
+
+## How it works
+
+b402 breaks the on-chain link between your wallet and your DeFi activity using Groth16 zero-knowledge proofs. After a one-time shield transaction, all subsequent actions — swaps, lending, withdrawals — are signed by the b402 relayer, not your wallet.
+
+<Steps>
+  <Step title="Install the SDK">
+    Add `@b402ai/solana` to your project with a single npm command.
+  </Step>
+  <Step title="Shield your tokens">
+    Move USDC or wSOL into the b402 shielded pool. Your wallet signs this once; the amount is public but future spending is unlinkable.
+  </Step>
+  <Step title="Trade or lend privately">
+    Call `b402.swap()`, `b402.lend()`, or `b402.redeem()`. The hosted relayer signs and pays gas — your wallet stays off-chain.
+  </Step>
+  <Step title="Withdraw anywhere">
+    Call `b402.unshield()` to send tokens to any Solana address. No on-chain link connects the withdrawal to your original deposit.
+  </Step>
+</Steps>
+
+## Supported operations
+
+| Operation | Method | Gas cost to you |
+|---|---|---|
+| Shield tokens | `b402.shield()` | ~5,000 lamports |
+| Private swap (Jupiter) | `b402.swap()` | $0 — relayer pays |
+| Private lend (Kamino) | `b402.lend()` | $0 + one-time ~$7 Kamino account rent |
+| Redeem lending position | `b402.redeem()` | $0 — relayer pays |
+| Unshield to any address | `b402.unshield()` | $0 — relayer pays |
+
+<Note>
+  b402 is live on Solana mainnet. The pool, verifiers, Jupiter adapter, and Kamino adapter are all deployed and operational.
+</Note>

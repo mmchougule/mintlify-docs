@@ -1,0 +1,112 @@
+---
+title: "The b402 relayer: gasless private transactions"
+description: "The b402 hosted relayer pays gas and signs unshield, swap, lend, and redeem transactions so your wallet never appears on those on-chain actions."
+---
+
+The b402 relayer is a server that submits signed transactions on your behalf. After you shield tokens, every subsequent operation — swaps, lending, unshields — is submitted by the relayer, not your wallet. Your wallet's pubkey never appears as a signer on those transactions, which is the mechanism that breaks the on-chain link between your identity and your DeFi activity.
+
+## What the relayer does
+
+The relayer:
+
+1. Receives a partially-built transaction from the SDK (proof included, relayer signature slot empty)
+2. Validates the transaction against the pool program's rules
+3. Signs the transaction with its own keypair
+4. Pays the Solana transaction fee (5–10k lamports per tx)
+5. Submits the transaction and returns the signature
+
+Your wallet provides the zero-knowledge proof — computed locally by the SDK — but never signs the on-chain transaction for any post-shield operation.
+
+## Why shield requires your wallet
+
+Shield is the one exception. Moving tokens from your public wallet into the pool requires a standard SPL token transfer, which requires the token account owner to sign. There's no way around this in the SPL token model — it's an Anchor-level constraint.
+
+The shield transaction is where the cost of entry is paid. After that, the relayer takes over.
+
+<Info>
+  Only `shield` requires your wallet signature. `swap`, `lend`, `redeem`, and `unshield` are all submitted by the relayer. This is by design, not a convenience shortcut.
+</Info>
+
+## Hosted relayer
+
+The b402 hosted relayer is available at:
+
+```
+https://b402-solana-relayer-mainnet.run.app
+```
+
+This is the default endpoint used by the SDK. You don't need to configure anything to use it — `B402Solana` points there automatically when `cluster: 'mainnet'`.
+
+## Security: can the relayer steal funds?
+
+No. The relayer cannot redirect funds to itself or any address other than the one you specified.
+
+When you build a spend transaction, the SDK commits a **`recipient_bind`** value into the ZK proof's public inputs:
+
+```
+recipient_bind = Poseidon(tag, recipient_owner_low_128, recipient_owner_high_128)
+```
+
+The on-chain pool program computes this value independently from `recipient_token_account.owner` and asserts it matches the proof's `recipient_bind`. If a malicious relayer substituted a different recipient account, the commitment would not match and the Groth16 verification would fail — the transaction would be rejected by the validator.
+
+<Warning>
+  The relayer can withhold or censor transactions — it could refuse to submit your unshield. It cannot steal funds or redirect them. If you suspect censorship, use the self-relay option below.
+</Warning>
+
+## Self-relaying
+
+You can bypass the hosted relayer entirely by passing your own keypair to the constructor:
+
+```typescript
+import { B402Solana } from '@b402ai/solana';
+
+const b402 = new B402Solana({
+  cluster: 'mainnet',
+  rpcUrl: process.env.RPC_URL!,
+  keypair: userKeypair,
+  relayer: userKeypair,   // self-relay: your wallet pays gas and signs
+});
+```
+
+When `relayer` is set to your own keypair, your wallet signs and pays gas for all operations including post-shield ones. This is useful for:
+
+- Testing locally without the hosted relayer
+- Running a private relayer for your own application
+- Situations where the hosted relayer is unavailable
+
+<Tip>
+  Self-relaying removes the privacy benefit for post-shield operations — your wallet appears as the fee payer on those transactions. Use it only for testing or when you're running your own infrastructure.
+</Tip>
+
+## Cost
+
+There is no protocol fee. The relayer charges 0% — it pays gas out of its own funds and does not deduct from the unshield amount.
+
+Relayer operating costs are covered separately (see the b402 economics model). From your perspective, all post-shield operations cost $0.
+
+The only cost you pay is:
+
+| Operation | Cost to you |
+|---|---|
+| `shield` | ~5,000 lamports (~$0.001) base Solana tx fee |
+| `swap`, `lend`, `redeem`, `unshield` | $0 |
+| First Kamino lend per (viewing key, mint) | ~0.04 SOL (~$7) for Kamino account rent — refundable |
+
+## Rate limits
+
+The SDK ships with a public API key that allows **5 requests per minute** to the hosted relayer. This is enough for development and low-volume use.
+
+For production applications with higher throughput requirements, bring your own API key:
+
+```typescript
+const b402 = new B402Solana({
+  cluster: 'mainnet',
+  rpcUrl: process.env.RPC_URL!,
+  keypair: userKeypair,
+  relayerApiKey: process.env.B402_RELAYER_API_KEY,
+});
+```
+
+<Note>
+  Contact the b402 team through the GitHub repo to get a production API key. The rate-limited public key is intentional — it prevents the hosted relayer from being used as free transaction infrastructure at scale.
+</Note>

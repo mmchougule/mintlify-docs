@@ -1,0 +1,148 @@
+---
+title: "Lend and redeem privately on Kamino"
+description: "Deposit shielded USDC into Kamino V2 and earn yield privately. b402 creates a per-viewing-key obligation so lending is unlinkable to your wallet."
+---
+
+Private lending lets you deposit shielded tokens into a Kamino V2 reserve and earn yield without your wallet appearing as the depositor. When you call `b402.lend()`, the SDK spends a shielded note, deposits the underlying tokens into Kamino via the b402 Kamino adapter, and mints a voucher note (a kUSDC commitment) back into your shielded balance. When you're ready to exit, `b402.redeem()` burns the voucher, withdraws the underlying USDC from your private Kamino obligation, and reshields the proceeds as a fresh USDC note.
+
+## How it works
+
+Each viewing key gets its own Kamino `Obligation` account, derived from your viewing key's spending public key. This means your lending position is unlinkable to your wallet address — a chain observer can see that some obligation exists, but cannot connect it to you.
+
+`b402.lend()` auto-discovers the deepest Kamino reserve for the mint you specify across all mainnet lending markets. You can pass a specific `market` pubkey to pin a particular one.
+
+<Warning>
+  `b402.lend()` and `b402.redeem()` are **mainnet only**. Kamino reserves do not exist on devnet or localnet. Calling these methods on devnet throws an error immediately.
+</Warning>
+
+## One-time setup cost
+
+The first time you lend with a given (viewing key, mint) combination, Kamino requires two accounts to be initialized:
+
+- **UserMetadata** — Kamino's per-user registry entry
+- **Obligation** — tracks your deposit position in the reserve
+
+Together these cost approximately **0.04 SOL (~$7)** in rent, paid as part of the `b402.lend()` transaction. This is a one-time cost per (viewing key, mint) pair. The rent is refundable by calling Kamino's `close_obligation` instruction once your position is fully empty.
+
+## Step-by-step
+
+<Steps>
+  <Step title="Shield USDC">
+    Move USDC from your wallet into the b402 shielded pool. Your wallet signs this one transaction; after this, your wallet address does not appear in any subsequent operations.
+
+    ```typescript
+    import { Keypair, PublicKey } from '@solana/web3.js';
+    import { B402Solana } from '@b402ai/solana';
+
+    const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+
+    const b402 = new B402Solana({
+      cluster: 'mainnet',
+      rpcUrl: process.env.RPC_URL!,
+      keypair: yourKeypair,
+    });
+    await b402.ready();
+
+    // 1_000_000 = 1 USDC (6 decimal places)
+    await b402.shield({ mint: USDC, amount: 1_000_000n });
+    ```
+  </Step>
+
+  <Step title="Deposit into Kamino privately">
+    Call `b402.lend()` with the mint and amount. The SDK discovers the best Kamino reserve, sets up your per-user obligation if needed, generates a ZK proof, and submits the deposit via the hosted relayer in one transaction.
+
+    ```typescript
+    const lendResult = await b402.lend({
+      mint: USDC,
+      amount: 1_000_000n,
+    });
+
+    console.log('Lend signature:', lendResult.signature);
+    console.log('Voucher note value:', lendResult.outNote.value.toString());
+    ```
+
+    After this call, your shielded balance holds a kUSDC voucher note instead of a USDC note. The voucher represents your claim on the Kamino reserve position.
+
+    <Note>
+      If this is your first `b402.lend()` call for this (viewing key, mint) pair, the transaction includes Kamino `UserMetadata` and `Obligation` initialization. Expect a slightly longer confirmation time (~2–3 seconds) and the one-time ~0.04 SOL rent charge.
+    </Note>
+  </Step>
+
+  <Step title="Wait — your position earns yield">
+    Your USDC is now deposited in Kamino and earning the reserve's current supply APY. You do not need to take any action while the position is open. The voucher note in your shielded balance represents your growing claim.
+
+    <Info>
+      Kamino accrues interest continuously. The amount you receive when you call `b402.redeem()` will be greater than the amount you deposited, reflecting the yield earned since your deposit.
+    </Info>
+  </Step>
+
+  <Step title="Redeem your position">
+    When you want to exit, call `b402.redeem()` with the same mint. The SDK finds your voucher note automatically, burns it, withdraws the underlying USDC from your Kamino obligation, and reshields the proceeds as a fresh USDC note.
+
+    ```typescript
+    const redeemResult = await b402.redeem({
+      mint: USDC,
+    });
+
+    console.log('Redeem signature:', redeemResult.signature);
+    console.log('USDC reshielded (raw units):', redeemResult.outAmount.toString());
+    ```
+
+    You can pass `leafIndex` to redeem a specific voucher if you have multiple lending positions:
+
+    ```typescript
+    const redeemResult = await b402.redeem({
+      mint: USDC,
+      leafIndex: 42,  // specific voucher leaf index
+    });
+    ```
+  </Step>
+
+  <Step title="Unshield or swap the redeemed USDC">
+    After redeem, you have a fresh shielded USDC note. You can:
+
+    - Unshield it to any Solana address with `b402.unshield()` (see [Withdraw tokens from the b402 pool](/guides/unshield))
+    - Swap it for another token with `b402.swap()`
+    - Lend it again with another `b402.lend()` call
+
+    ```typescript
+    // Example: unshield the redeemed USDC to a recipient address
+    const recipientPubkey = new PublicKey('your-recipient-pubkey');
+    await b402.unshield({ to: recipientPubkey, mint: USDC });
+    ```
+  </Step>
+</Steps>
+
+## Per-user obligations
+
+Each viewing key gets a separate Kamino `Obligation` account, derived deterministically from the viewing key's `outSpendingPub`. This means:
+
+- Multiple wallets using b402 do not share an obligation — your position is isolated
+- The obligation address is unlinkable to your wallet address by an on-chain observer
+- If you use a different device or keypair (with the same viewing key derivation), you access the same obligation
+
+Each obligation is keyed on the viewing key's spending public key, so it is unlinkable to the original wallet even if multiple wallets use b402 simultaneously.
+
+## Reserve discovery
+
+`b402.lend()` scans all Kamino lending markets and selects the reserve with the highest total supply (available + borrowed) for your mint. You can override this by passing a specific market:
+
+```typescript
+const MY_MARKET = new PublicKey('your-kamino-market-pubkey');
+
+await b402.lend({
+  mint: USDC,
+  amount: 1_000_000n,
+  market: MY_MARKET,
+});
+```
+
+## Adapter details
+
+| Property | Value |
+|---|---|
+| Adapter | Kamino V2 lend/redeem |
+| Program | `2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX` |
+| Networks | Mainnet only |
+| Borrow / repay | Scaffolded but not yet available |
+| One-time setup | ~0.04 SOL per (viewing key, mint), refundable via `close_obligation` |

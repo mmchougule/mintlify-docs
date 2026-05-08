@@ -1,0 +1,201 @@
+---
+title: "Install and configure the b402 SDK"
+description: "Add @b402ai/solana to your project and configure cluster, keypair, relayer, and RPC options. Call ready() to fetch and cache circuit artifacts."
+---
+
+This page covers everything you need to get `@b402ai/solana` running in your project: the npm install command, both integration paths (SDK class and MCP server), every constructor config option, and environment variable overrides for the MCP server.
+
+## Install
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install @b402ai/solana
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @b402ai/solana
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @b402ai/solana
+    ```
+  </Tab>
+</Tabs>
+
+## Two integration paths
+
+Depending on how you want to use b402, there are two starting points.
+
+<Tabs>
+  <Tab title="SDK class (TypeScript)">
+    Use `B402Solana` when you are building an application and want to call `shield`, `swap`, `lend`, `redeem`, or `unshield` from TypeScript.
+
+    ```typescript
+    import { B402Solana } from '@b402ai/solana';
+    import { Keypair } from '@solana/web3.js';
+
+    const b402 = new B402Solana({
+      cluster: 'mainnet',
+      rpcUrl: process.env.RPC_URL!,
+      keypair: yourKeypair,
+    });
+    await b402.ready();
+    ```
+
+    This is the recommended path for app integrations. See the [Quickstart](/quickstart) for a working example.
+  </Tab>
+  <Tab title="MCP server (Claude / Cursor)">
+    Use the MCP server when you want to run private operations directly from your IDE via Claude Code or Cursor — no application code required.
+
+    ```bash
+    claude mcp add b402-solana -- npx -y @b402ai/solana-mcp@latest
+    ```
+
+    After installation, you can prompt your agent: "swap 1 USDC privately for SOL" and it will call `mcp__b402-solana__private_swap`.
+
+    The MCP server reads configuration from environment variables — see [MCP environment variables](#mcp-environment-variables) below.
+  </Tab>
+</Tabs>
+
+## Constructor config options
+
+`B402Solana` accepts a `B402SolanaConfig` object. The following fields are available.
+
+### Required
+
+<ParamField body="cluster" type="'mainnet' | 'devnet' | 'localnet'" required>
+  The Solana cluster to connect to. Controls which default program IDs, relayer URL, and RPC endpoint the SDK uses when you do not supply them explicitly.
+</ParamField>
+
+<ParamField body="keypair" type="Keypair">
+  A Solana `Keypair` from `@solana/web3.js`. Use this in Node.js, MCP servers, and test scripts. The SDK wraps it as a `KeypairSigner` internally. Pass either `keypair` or `signer` — not both.
+</ParamField>
+
+<ParamField body="signer" type="B402Signer">
+  A `B402Signer` abstraction for browser environments. Pass a `WalletAdapterSigner` constructed from a wallet adapter, or any custom implementation of the `B402Signer` interface. Pass either `signer` or `keypair` — not both.
+</ParamField>
+
+### Network
+
+<ParamField body="rpcUrl" type="string">
+  Your RPC endpoint URL. The public `api.mainnet-beta.solana.com` endpoint rate-limits aggressively; use a private provider (Helius, Triton, QuickNode, Alchemy). Defaults to `clusterApiUrl(cluster)` if omitted.
+</ParamField>
+
+<ParamField body="relayerHttpUrl" type="string">
+  HTTP URL of the b402 relayer. When set, `unshield`, `swap`, `lend`, and `redeem` route through this relayer — the on-chain fee payer becomes the relayer's wallet, not yours. `shield` always signs locally.
+
+  Default values by cluster:
+
+  | Cluster | Default URL |
+  |---|---|
+  | `mainnet` | `https://b402-solana-relayer-mainnet-62092339396.us-central1.run.app` |
+  | `devnet` | `https://b402-solana-relayer-devnet-62092339396.us-central1.run.app` |
+  | `localnet` | none |
+
+  Pass an empty string (`''`) to disable the hosted relayer entirely and fall back to self-paying with `relayer`.
+</ParamField>
+
+<ParamField body="relayerApiKey" type="string">
+  API key forwarded as `Authorization: Bearer <key>` to the relayer. A public-tier key (5 req/min) is baked into the SDK defaults for mainnet and devnet — you do not need to set this unless you have your own key.
+</ParamField>
+
+<ParamField body="relayer" type="Keypair">
+  Override the fee payer for local development. When `relayerHttpUrl` is not set and no `relayer` is passed, the SDK uses `keypair` as the fee payer. Pass a separate `Keypair` here to avoid draining your main wallet during tests.
+</ParamField>
+
+<ParamField body="indexerUrl" type="string">
+  URL of the b402 indexer API. When set, `unshield` and `swap` fetch Merkle proofs for any leaf via `/v1/proof?leafIndex=N`, enabling you to spend notes in any order and from multiple devices.
+
+  The SDK verifies the indexer's claimed Merkle root against the on-chain `TreeState` before using any proof — a compromised indexer can cause a denial of service but cannot produce a forgeable spend.
+
+  When omitted, the SDK falls back to `proveMostRecentLeaf` (rightmost leaf only).
+
+  Default for `mainnet`: `https://b402-solana-indexer-api-62092339396.us-central1.run.app`
+</ParamField>
+
+### Storage
+
+<ParamField body="notesPersistDir" type="string">
+  Directory path for the on-disk note store. The SDK writes `<dir>/<viewingPubHex>.json` — one file per viewing key — so your shielded notes survive process restarts. Multiple wallets coexist in the same directory.
+
+  Default: `~/.b402ai/notes/<cluster>` (Node.js only). Set to `undefined` to keep notes in memory for the lifetime of the process.
+
+  <Note>
+    Notes are stored in plaintext. This has the same threat model as the Solana keypair file your wallet was derived from.
+  </Note>
+</ParamField>
+
+### Advanced
+
+<ParamField body="inlineCpiNullifier" type="boolean" default="true (mainnet/devnet), false (localnet)">
+  When `true`, the SDK builds unshield and swap transactions with the pool calling `b402_nullifier` as a CPI instead of a sibling instruction. This saves ~150 wire bytes per nullifier.
+
+  The current mainnet and devnet pools require this to be `true`. Defaults to `true` for `mainnet` and `devnet`, `false` for `localnet`.
+</ParamField>
+
+<ParamField body="programIds" type="object">
+  Partial override of the default program IDs. Useful when testing against a localnet deployment with different program addresses. Each key in the object corresponds to a program name in the shared `PROGRAM_IDS` map.
+</ParamField>
+
+## Node.js vs browser
+
+The SDK supports both Node.js and browser environments, but the signer configuration differs.
+
+<CodeGroup>
+
+```typescript Node.js (keypair)
+import { Keypair } from '@solana/web3.js';
+import { B402Solana } from '@b402ai/solana';
+import { readFileSync } from 'node:fs';
+
+const secret = JSON.parse(readFileSync(process.env.KEYPAIR_PATH!, 'utf-8'));
+const keypair = Keypair.fromSecretKey(Uint8Array.from(secret));
+
+const b402 = new B402Solana({
+  cluster: 'mainnet',
+  rpcUrl: process.env.RPC_URL!,
+  keypair,
+});
+await b402.ready();
+```
+
+```typescript Browser (wallet adapter)
+import { B402Solana } from '@b402ai/solana';
+import { WalletAdapterSigner } from '@b402ai/solana/signer';
+
+// `wallet` is a connected wallet adapter instance
+const b402 = new B402Solana({
+  cluster: 'mainnet',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL!,
+  signer: WalletAdapterSigner.fromAdapter(wallet),
+});
+await b402.ready();
+```
+
+</CodeGroup>
+
+## MCP environment variables
+
+When using the MCP server, configure it through environment variables instead of constructor arguments.
+
+| Variable | Description | Default |
+|---|---|---|
+| `B402_CLUSTER` | `mainnet`, `devnet`, or `localnet` | `mainnet` |
+| `B402_RPC_URL` | Private RPC endpoint URL | `api.mainnet-beta.solana.com` |
+| `B402_KEYPAIR_PATH` | Path to a Solana CLI keypair file | `~/.config/solana/id.json` |
+
+Example:
+
+```bash
+B402_CLUSTER=devnet \
+B402_RPC_URL=https://api.devnet.solana.com \
+B402_KEYPAIR_PATH=~/.config/solana/id.json \
+npx -y @b402ai/solana-mcp@latest
+```
+
+<Info>
+  The MCP server uses the same hosted relayer defaults as the SDK. For devnet testing, you do not need a funded keypair for anything beyond the initial shield.
+</Info>

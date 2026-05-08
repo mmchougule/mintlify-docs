@@ -1,0 +1,147 @@
+---
+title: "Use b402 from Claude Code or Cursor"
+description: "Install the b402 MCP server to run private swaps, lending, and balance checks directly from your IDE using natural-language prompts."
+---
+
+The b402 MCP server wraps the full b402 SDK as a set of agent-callable tools. Once installed, you can describe what you want to do in plain language — "swap 1 USDC privately for SOL", "what's my private balance?", "lend my shielded USDC on Kamino" — and your IDE agent calls the right tool automatically. No code required for interactive operations; the agent handles the plumbing.
+
+## Install
+
+Run this single command to wire the b402 MCP server into Claude Code:
+
+```bash
+claude mcp add b402-solana -- npx -y @b402ai/solana-mcp@latest
+```
+
+The server uses your existing Solana CLI keypair at `~/.config/solana/id.json` by default. Circuit artifacts are bundled inside the package — no separate clone or build step needed.
+
+For Cursor or any other MCP-compatible runtime, consult that tool's documentation for how to register an MCP server via stdio. The invocation is:
+
+```bash
+npx -y @b402ai/solana-mcp@latest
+```
+
+## What you can say to your agent
+
+After installation, open any Claude Code or Cursor session and try prompts like:
+
+- `"What's my private balance on b402?"`
+- `"Swap 1 USDC privately for SOL"`
+- `"Lend my shielded USDC privately on Kamino"`
+- `"Add private swap to my Next.js app"`
+- `"Unshield 1 USDC to this address: <pubkey>"`
+- `"Watch for any incoming private deposits"`
+- `"Give me a Jupiter quote for swapping 50 USDC to SOL"`
+
+The agent selects the appropriate MCP tool and executes it. For write operations (shield, swap, lend), it may ask you to confirm before proceeding.
+
+## Available tools
+
+| Tool | What it does |
+|---|---|
+| `shield` | Move SPL tokens from your wallet into a private shielded balance |
+| `unshield` | Withdraw a private deposit to any public Solana address |
+| `private_swap` | Atomic private swap through a registered adapter (Jupiter on mainnet, mock on devnet) |
+| `private_lend` | Deposit shielded USDC into Kamino V2 privately; mints a kUSDC voucher commitment. Each viewing key gets its own Kamino Obligation. First call pays a one-time ~0.04 SOL for UserMetadata + Obligation rent. Mainnet only. |
+| `private_redeem` | Burn a kUSDC voucher from a prior `private_lend`, withdraw underlying USDC from your per-user obligation, and reshield the proceeds. Mainnet only. |
+| `status` | Your wallet pubkey plus private balances grouped by mint |
+| `holdings` | Per-deposit list of private holdings — ID, mint, and amount for each note |
+| `balance` | Aggregate private balance per mint (local-only, no RPC call) |
+| `quote_swap` | Fetch a Jupiter quote: expected output, slippage, and price impact. Mainnet only. |
+| `watch_incoming` | Cursor-based poll for newly arrived private deposits |
+
+## Environment variables
+
+All four variables are optional. Set only the ones you need to override:
+
+| Variable | Default | Description |
+|---|---|---|
+| `B402_CLUSTER` | `mainnet` | One of `mainnet`, `devnet`, or `localnet` |
+| `B402_RPC_URL` | Public RPC for the cluster | Use a private endpoint (Helius, Triton, QuickNode) in production |
+| `B402_KEYPAIR_PATH` | `~/.config/solana/id.json` | Path to an alternate Solana CLI keypair |
+| `B402_CIRCUITS_ROOT` | Bundled artifacts in the package | Override to use a custom circuits directory |
+
+To set environment variables when registering the server in Claude Code:
+
+```bash
+claude mcp add b402-solana \
+  --env B402_CLUSTER=mainnet \
+  --env B402_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \
+  -- npx -y @b402ai/solana-mcp@latest
+```
+
+<Steps>
+  <Step title="Install the MCP server">
+    Run the one-line install command in your terminal:
+
+    ```bash
+    claude mcp add b402-solana -- npx -y @b402ai/solana-mcp@latest
+    ```
+
+    Restart Claude Code after running this command.
+  </Step>
+
+  <Step title="Verify the connection">
+    Open a new Claude Code session and ask:
+
+    ```
+    What's my private b402 balance?
+    ```
+
+    The agent calls `mcp__b402-solana__status` and returns your wallet pubkey and any shielded balances. If you see a result, the MCP server is wired correctly.
+  </Step>
+
+  <Step title="Run your first private operation">
+    Try a private swap. Make sure you have shielded USDC first (the agent can do this for you — just ask "shield 1 USDC"):
+
+    ```
+    Swap 1 USDC privately for SOL
+    ```
+
+    The agent shields if needed, fetches a Jupiter quote, generates the ZK proof, and submits via the hosted relayer. Your wallet does not appear in the swap transaction.
+  </Step>
+
+  <Step title="Optional: set a private RPC">
+    Public RPC endpoints throttle under load. For reliable mainnet operation, pass a private RPC:
+
+    ```bash
+    claude mcp add b402-solana \
+      --env B402_CLUSTER=mainnet \
+      --env B402_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \
+      -- npx -y @b402ai/solana-mcp@latest
+    ```
+
+    To test without real funds, switch to devnet:
+
+    ```bash
+    claude mcp add b402-solana \
+      --env B402_CLUSTER=devnet \
+      -- npx -y @b402ai/solana-mcp@latest
+    ```
+  </Step>
+</Steps>
+
+## Security
+
+The MCP server is designed so your keypair never leaves the process boundary:
+
+- The keypair is loaded once from disk at startup and held in memory for the lifetime of the server process
+- It is never logged, never written to any file, and never included in tool responses
+- Tool responses contain only public values: transaction signatures, wallet pubkeys, deposit IDs, mints, and amounts
+- Input pubkeys are validated as base58 before use; amounts are validated as `u64` strings (no floating-point handling)
+- All status messages go to stderr; stdout is the MCP transport only
+
+<Warning>
+  The keypair at `~/.config/solana/id.json` (or `B402_KEYPAIR_PATH`) can sign the initial shield transaction and pay the one-time Kamino setup rent. Protect it with the same care you apply to any Solana hot wallet. The relayer signs all other transactions — swap, lend, redeem, and unshield — so your keypair is not needed for those.
+</Warning>
+
+## Devnet vs. mainnet differences
+
+| Feature | Mainnet | Devnet |
+|---|---|---|
+| `private_swap` | Routes through Jupiter v6 | Uses mock adapter (constant 2x output, no real AMM) |
+| `private_lend` / `private_redeem` | Live — Kamino V2 USDC reserve | Not available — Kamino reserves don't exist on devnet |
+| `quote_swap` | Returns live Jupiter quotes | Returns `RouteNotFound` — Jupiter doesn't index devnet liquidity |
+| `shield` / `unshield` | Live, real funds | Live, devnet funds (use `solana airdrop` to fund) |
+
+Set `B402_CLUSTER=devnet` to test the full flow with no real funds at risk. The mock adapter's constant-2x output makes it easy to verify your integration is wired correctly before moving to mainnet.

@@ -1,0 +1,77 @@
+---
+title: "b402 privacy model: what's hidden vs visible"
+description: "Understand exactly what b402 hides on-chain, what stays visible, and how Groth16 zero-knowledge proofs create unlinkability between deposit and spending."
+---
+
+b402 doesn't change the fact that Solana is a public chain. What it does is cryptographically break the link between your wallet and your shielded actions. After you shield tokens, subsequent operations — swaps, lending, unshields — are signed by the b402 relayer, not your wallet. An on-chain observer can see that a swap happened, how much moved, and which programs were involved. They cannot determine who initiated it or connect it back to the original deposit.
+
+## Three layers of privacy
+
+b402's privacy model operates at three levels of increasing strength:
+
+| Layer | What it protects | How it works |
+|---|---|---|
+| **L1: wallet ↔ action** | Your wallet is not visible as the spend authority on any post-shield action | A Groth16 proof binds the spend without revealing which note was spent or who holds it |
+| **L2: action ↔ action** | Two shielded actions can't be trivially linked to each other | Notes are independent; per-user adapter PDAs don't expose a common identity |
+| **L3: pool-level clustering** | Amount and timing correlation across the pool boundary | Scales with the anonymity set — stronger as TVL grows |
+
+L1 is the foundational guarantee. It covers the most common real-world threats: wallet-watching bots, MEV searchers, and surveillance indexers building wallet-level histories.
+
+## What's visible vs hidden
+
+### Shield transaction
+
+When you shield tokens, your wallet must sign the transaction. The deposit is public:
+
+| Data | On chain? | Who can see it |
+|---|---|---|
+| Your wallet (depositor pubkey) | Yes | Everyone |
+| Source token account | Yes | Everyone |
+| Mint being shielded | Yes | Everyone |
+| Amount shielded | Yes | Everyone |
+| Commitment (opaque hash) | Yes | Everyone — but it can't be opened without the spending key |
+| Who will spend the note | No | Nobody until the spend happens |
+| Nullifier | No (zero on shield) | Revealed only when the note is spent |
+
+<Note>
+  The shield transaction links your wallet to the deposited amount and mint. This is unavoidable — SPL token transfers require a real signer. What's protected is everything that comes after: future unshields, swaps, and lending actions carry no on-chain edge back to your wallet.
+</Note>
+
+### Post-shield operations (swap, lend, unshield)
+
+Once tokens are in the shielded pool, the relayer signs all subsequent transactions. Your wallet does not appear:
+
+| Visible | Hidden |
+|---|---|
+| Amount of the operation | Who deposited |
+| Adapter program (e.g. Jupiter) | Who receives the output note |
+| Fill venue (Phoenix, Raydium, etc.) | Linkage between the deposit and this action |
+| Relayer pubkey (paid the gas) | Your wallet address |
+
+## What b402 defends against
+
+**Wallet-watching bots.** Bots that scrape the mempool or transaction history to copy trading strategies see the swap happen but can't attribute it to your wallet.
+
+**MEV searchers.** On-chain DEX flows that would expose frontrunning targets are submitted through the relayer. Your wallet's balance history and trading patterns stay private.
+
+**Surveillance-grade indexers.** Services like Chainalysis, Nansen, and Arkham build wallet-level histories by following on-chain edges between addresses. b402 breaks those edges at the shielded pool boundary.
+
+Layer 1 unlinkability is sufficient to defeat all three. An observer can see that *someone* swapped USDC for SOL through the b402 pool; they cannot determine that it was *your* wallet.
+
+## What b402 does NOT fully defend against
+
+<Warning>
+  Patient timing-and-amount correlation attacks remain a risk at low TVL. If an analyst knows that 1,000 USDC was deposited at time T and 1,000 USDC was unshielded shortly afterward with no other pool activity, they can infer a likely link.
+
+  This is a fundamental property of UTXO-mixer constructions — not specific to b402. The mitigation is a larger anonymity set: every additional user who shields strengthens privacy for all existing users. A soft TVL cap is enforced while the set grows.
+</Warning>
+
+For autonomous agents and applications where the adversary is automated strategy-copying bots, not patient analysts running statistical attacks, Layer 1 is sufficient.
+
+## Anonymity set
+
+Your privacy is bounded by how many independent notes exist in the pool at the time you spend. A pool with 10 notes gives an analyst a 1-in-10 chance to guess correctly by timing alone. A pool with 10,000 notes makes timing correlation far less useful.
+
+b402 enforces a soft TVL cap while the anonymity set is small. As TVL grows and more wallets contribute notes, the pool approaches the same privacy characteristics as mature systems like Tornado Cash or Railgun on EVM chains.
+
+The Merkle tree supports up to 2^26 (~67 million) leaves. Every shield adds one leaf, permanently growing the historical set.

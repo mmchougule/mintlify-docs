@@ -1,0 +1,88 @@
+---
+title: "b402 on-chain program IDs and addresses"
+description: "All deployed b402 program IDs on Solana mainnet and devnet: pool, verifiers, Jupiter adapter, Kamino adapter, and the Address Lookup Table."
+---
+
+b402 is deployed across several programs on Solana mainnet. The pool holds shielded commitments; the verifiers enforce zero-knowledge proof correctness; the adapters route private execution to Jupiter, Kamino, and other protocols; and the Address Lookup Table compresses account metas so that the heaviest `adapt_execute` transaction fits within Solana's 1,232-byte wire limit.
+
+## Mainnet programs
+
+| Program | ID |
+|---|---|
+| Pool | `42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y` |
+| Verifier (transact) | `Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK` |
+| Verifier (adapt) | `3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae` |
+| Jupiter adapter | `3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7` |
+| Kamino adapter | `2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX` |
+| Mock adapter | `89kw33YDcbXfiayVNauz599LaDm51EuU8amWydpjYKgp` |
+| b402 ALT (16 entries) | `9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj` |
+
+<Note>
+  The mock adapter (`89kw33...`) is deployed to devnet only and is used for adapter ABI invariant tests. Do not reference it in production integrations.
+</Note>
+
+### Pool
+
+`42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y`
+
+The central pool program. Manages the Merkle commitments tree, dispatches adapter CPIs via `adapt_execute`, verifies Groth16 proofs through the verifier programs, and enforces post-CPI balance deltas.
+
+### Verifier (transact)
+
+`Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK`
+
+Groth16 BN254 verifier for the transact circuit (18 public inputs). Used by `shield` and `unshield` to verify spend proofs.
+
+### Verifier (adapt)
+
+`3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae`
+
+Groth16 BN254 verifier for the adapt circuit (23 public inputs). Used by `adapt_execute` (`swap`, `lend`, `redeem`) to verify adapter binding proofs.
+
+### Jupiter adapter
+
+`3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7`
+
+CPI adapter that forwards the `action_payload` (Jupiter swap instruction bytes) to Jupiter v6. Handles any Jupiter-routed pair. Used by `b402.swap()` on mainnet.
+
+### Kamino adapter
+
+`2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX`
+
+CPI adapter for Kamino V2 lending. Supports per-user obligations keyed on the viewing key's spending public key, and runs up to 7 nested Kamino CPIs in a single transaction. Used by `b402.lend()` and `b402.redeem()`.
+
+### b402 Address Lookup Table
+
+`9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj`
+
+A 16-entry Address Lookup Table that compresses frequently used account addresses (pool program, both verifiers, USDC and wSOL mints, system and token programs, b402 vaults) from 32-byte inline pubkeys to 1-byte ALT indexes. This is what allows the full `adapt_execute` flow to fit in a single v0 transaction under Solana's 1,232-byte wire limit.
+
+<Note>
+  If you extend the pool with a custom adapter and its route references additional accounts, extend the b402 ALT with those accounts rather than passing them as static account metas. Passing custom ALTs without also including the b402 ALT will cause the transaction to exceed the size limit.
+</Note>
+
+---
+
+## Hosted services
+
+| Service | URL |
+|---|---|
+| Mainnet relayer | `https://b402-solana-relayer-mainnet.run.app` |
+
+The hosted relayer is the default fee payer for `unshield`, `swap`, `lend`, and `redeem` on mainnet. It signs those transactions so your wallet does not appear as the executing party. You can self-host a relayer or pass your own keypair as `relayer` in the `B402Solana` constructor if you prefer not to use the hosted service.
+
+---
+
+## Adapter status
+
+| Adapter | Status | What it enables |
+|---|---|---|
+| Jupiter v6 | Mainnet, live | Private swap on any Jupiter-routed pair |
+| Kamino lend | Mainnet, live — USDC reserve, per-user obligation | Private deposit into Kamino; redeem reshields the underlying |
+| Mock | Devnet only | Adapter ABI invariant testing (constant 2x output) |
+| Adrena perps | Scaffold | Private leveraged trading |
+| Orca LP | Scaffold | Private Whirlpool LP positions |
+| Jupiter perps | Scaffold | Private perps via JLP (pending v2 ABI two-phase claim) |
+| Drift perps | Spec only | Deferred pending Drift's post-hack reboot |
+
+Adding a new adapter requires only a single Anchor crate (~200–300 LoC) implementing the `execute(action_payload)` ABI and a registry entry. No circuit changes, no new ceremony, and no pool upgrade are needed.

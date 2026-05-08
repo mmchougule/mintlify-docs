@@ -1,0 +1,156 @@
+---
+title: "Make a private token swap via Jupiter"
+description: "Swap tokens privately through Jupiter routing using b402. Your wallet stays off-chain; the relayer signs the on-chain transaction on your behalf."
+---
+
+A private swap burns a shielded note in your input token, routes the trade through Jupiter, and reshields the proceeds into a new note in your output token — all in a single on-chain transaction. Your wallet address does not appear anywhere in the swap transaction. The only on-chain evidence is the swap amount, the adapter program (Jupiter), and the relayer's public key.
+
+## Prerequisites
+
+Before calling `b402.swap()`, make sure you have:
+
+- `@b402ai/solana` installed (see [Installation](/installation))
+- A private RPC endpoint — public `api.mainnet-beta.solana.com` is rate-limited and will cause failures under load
+- A shielded balance in the input mint with **exactly** the amount you want to swap (see the note on exact-match deposits below)
+
+## Step-by-step
+
+<Steps>
+  <Step title="Install and configure the SDK">
+    If you haven't already, install the package and instantiate `B402Solana`. The `ready()` call fetches and SHA256-verifies circuit artifacts (~36 MB) on the first run; subsequent calls are instant from cache at `~/.b402ai/circuits`.
+
+    ```typescript
+    import { Keypair, PublicKey } from '@solana/web3.js';
+    import { B402Solana } from '@b402ai/solana';
+
+    const b402 = new B402Solana({
+      cluster: 'mainnet',
+      rpcUrl: process.env.RPC_URL!,  // Helius / Triton / your own
+      keypair: yourKeypair,           // user signs the initial shield only
+    });
+    await b402.ready();
+    ```
+
+    See [Installation](/installation) for the full setup guide, including how to load a keypair from disk.
+  </Step>
+
+  <Step title="Shield the input amount">
+    Move your tokens from your wallet into the b402 shielded pool. Your wallet signs this transaction once. After this point, no further transaction references your wallet address.
+
+    ```typescript
+    const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    const SOL  = new PublicKey('So11111111111111111111111111111111111111112');
+
+    // Shield exactly the amount you plan to swap.
+    // 1_000_000 = 1 USDC (6 decimal places)
+    await b402.shield({ mint: USDC, amount: 1_000_000n });
+    ```
+
+    <Warning>
+      `b402.swap()` spends the **entire note**. You must shield exactly the amount you want to swap. If you have an existing 200,000 USDC note and you want to swap 50,000 USDC, shield exactly 50,000 USDC first to create the right-sized note. There is no partial-spend or change-back on the input side.
+    </Warning>
+  </Step>
+
+  <Step title="Call b402.swap()">
+    Pass the input mint, output mint, and the amount you shielded. The SDK fetches a Jupiter quote, builds the adapter instruction, generates the ZK proof, and submits everything via the hosted relayer. Your wallet is not involved.
+
+    ```typescript
+    const { signature, outAmount } = await b402.swap({
+      inMint: USDC,
+      outMint: SOL,
+      amount: 1_000_000n,
+    });
+
+    console.log('Swap signature:', signature);
+    console.log('SOL received (lamports):', outAmount.toString());
+    ```
+
+    You can also pass `slippageBps` to control slippage tolerance (default is 30 basis points, i.e. 0.3%):
+
+    ```typescript
+    const result = await b402.swap({
+      inMint: USDC,
+      outMint: SOL,
+      amount: 1_000_000n,
+      slippageBps: 50,  // 0.5% slippage tolerance
+    });
+    ```
+  </Step>
+
+  <Step title="Check the result">
+    `b402.swap()` returns a `PrivateSwapResult` with three fields:
+
+    ```typescript
+    interface PrivateSwapResult {
+      signature: string;       // on-chain transaction signature
+      outNote: SpendableNote;  // new shielded note in outMint
+      outAmount: bigint;       // observed vault delta post-swap (in outMint raw units)
+    }
+    ```
+
+    `outNote` is already in your local note store — you can spend it immediately in a subsequent `unshield()`, `lend()`, or another `swap()` call without any extra steps.
+
+    ```typescript
+    console.log('Transaction:', signature);
+    console.log('SOL note value (lamports):', outNote.value.toString());
+    console.log('Actual out (vault delta):', outAmount.toString());
+    ```
+  </Step>
+</Steps>
+
+## Exact-match deposit requirement
+
+`b402.swap()` spends the whole input note in one shot. The circuit does not support partial spends with change returned to the same mint. This means the note value must exactly equal `amount`.
+
+If the SDK cannot find a note that matches `amount` precisely, it throws an error listing your available deposit sizes:
+
+```
+private_swap requires an exact-match deposit. Available deposit sizes for this mint:
+[200000000]. Requested: 50000000.
+To swap a different amount, first shield exactly that amount, or unshield and reshield to split.
+```
+
+The fix is straightforward: shield exactly the amount you want to swap before calling `b402.swap()`.
+
+## What you get back
+
+`b402.swap()` returns `PrivateSwapResult`:
+
+| Field | Type | Description |
+|---|---|---|
+| `signature` | `string` | Solana transaction signature |
+| `outNote` | `SpendableNote` | New shielded note in `outMint`, spendable immediately |
+| `outAmount` | `bigint` | Actual tokens delivered to the pool vault (raw units of `outMint`) |
+
+## Adapter and network details
+
+<CodeGroup>
+
+```text Mainnet
+Adapter:  Jupiter v6 (live)
+Program:  3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7
+Routing:  Phoenix-direct by default; full Jupiter route graph available
+Timing:   ~1.3s total (proof generation ~800ms, relayer submit ~500ms)
+```
+
+```text Devnet
+Adapter:  Mock adapter (live)
+Program:  89kw33YDcbXfiayVNauz599LaDm51EuU8amWydpjYKgp
+Routing:  Constant 2x echo — no real AMM, no real liquidity
+Use case: Wiring tests and CI without spending real funds
+```
+
+</CodeGroup>
+
+<Note>
+  `quote_swap` and live Jupiter routing only work on mainnet. On devnet, `b402.swap()` falls through to the mock adapter automatically — you do not need to change any code.
+</Note>
+
+## What is visible on-chain
+
+| Visible | Hidden |
+|---|---|
+| Amount of the swap | Who deposited |
+| Adapter program (Jupiter) | Who receives the output note |
+| Fill venue (Phoenix, Raydium, …) | Link between your USDC deposit and the SOL output |
+| Relayer public key (paid the gas) | Your wallet address |
