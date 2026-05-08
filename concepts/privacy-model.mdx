@@ -1,77 +1,170 @@
 ---
-title: "b402 privacy model: what's hidden vs visible"
-description: "Understand exactly what b402 hides on-chain, what stays visible, and how Groth16 zero-knowledge proofs create unlinkability between deposit and spending."
+title: Privacy Model
+description: "What's hidden, what isn't, and the two on-chain artifacts that prove it."
 ---
 
-b402 doesn't change the fact that Solana is a public chain. What it does is cryptographically break the link between your wallet and your shielded actions. After you shield tokens, subsequent operations — swaps, lending, unshields — are signed by the b402 relayer, not your wallet. An on-chain observer can see that a swap happened, how much moved, and which programs were involved. They cannot determine who initiated it or connect it back to the original deposit.
+This page enumerates the privacy properties b402-solana actually provides
+on mainnet today, with file:line citations to the on-chain code that
+enforces each one. Anything not listed here is not claimed.
 
-## Three layers of privacy
+## What's hidden
 
-b402's privacy model operates at three levels of increasing strength:
+### 1. Note contents (amount, mint, ownership)
 
-| Layer | What it protects | How it works |
-|---|---|---|
-| **L1: wallet ↔ action** | Your wallet is not visible as the spend authority on any post-shield action | A Groth16 proof binds the spend without revealing which note was spent or who holds it |
-| **L2: action ↔ action** | Two shielded actions can't be trivially linked to each other | Notes are independent; per-user adapter PDAs don't expose a common identity |
-| **L3: pool-level clustering** | Amount and timing correlation across the pool boundary | Scales with the anonymity set — stronger as TVL grows |
+Every shielded balance lives in the pool tree as a Poseidon commitment
 
-L1 is the foundational guarantee. It covers the most common real-world threats: wallet-watching bots, MEV searchers, and surveillance indexers building wallet-level histories.
+```
+commitmentHash = Poseidon(TAG_COMMIT, mintFr, valueFr, random, spendingPub)
+```
 
-## What's visible vs hidden
+The pool stores the leaf, not the preimage. A Groth16 proof binds the
+amount, mint, and ownership in zero-knowledge during every spend; the
+verifier program never receives the value or the spending key. See the
+commitment construction in
+[`programs/b402-pool/src/instructions/adapt_execute.rs:939-956`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-pool/src/instructions/adapt_execute.rs#L939-L956)
+(the excess-leaf path under dual-note minting mirrors the SDK's `commitmentHash` byte-for-byte)
+and the verifier in
+[`programs/b402-verifier-adapt/src/lib.rs:40-52`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-verifier-adapt/src/lib.rs#L40-L52).
 
-### Shield transaction
+### 2. Sender → recipient unlinkability
 
-When you shield tokens, your wallet must sign the transaction. The deposit is public:
+When the relayer signs a post-shield op (swap, lend, redeem, perp open),
+the trader's wallet is not in the transaction. The recipient binding is
+proof-bound as
+`Poseidon_3(TAG_RECIPIENT_BIND, owner_low_128, owner_high_128)` and never
+exposed as a pubkey on the wire.
 
-| Data | On chain? | Who can see it |
-|---|---|---|
-| Your wallet (depositor pubkey) | Yes | Everyone |
-| Source token account | Yes | Everyone |
-| Mint being shielded | Yes | Everyone |
-| Amount shielded | Yes | Everyone |
-| Commitment (opaque hash) | Yes | Everyone — but it can't be opened without the spending key |
-| Who will spend the note | No | Nobody until the spend happens |
-| Nullifier | No (zero on shield) | Revealed only when the note is spent |
+Concrete artifact (mainnet): the privateSwap tx
+[`5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB`](https://solscan.io/tx/5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB)
+is signed by the hosted relayer
+`7f6gRiX56dMQGrPERNBKuzFsvagFTM1U4LMAAN9rsiNM`, not by the trader's
+wallet. The trader's pubkey appears in zero accounts on this transaction.
 
-<Note>
-  The shield transaction links your wallet to the deposited amount and mint. This is unavoidable — SPL token transfers require a real signer. What's protected is everything that comes after: future unshields, swaps, and lending actions carry no on-chain edge back to your wallet.
-</Note>
+### 3. Slab-side wallet isolation (per-protocol PDAs)
 
-### Post-shield operations (swap, lend, unshield)
+Stateful adapters (Kamino today, Drift / Marginfi / Adrena scaffolded)
+register positions in the downstream protocol under a PDA derived from the
+trader's spending key — never under the trader's wallet.
 
-Once tokens are in the shielded pool, the relayer signs all subsequent transactions. Your wallet does not appear:
+```rust
+// programs/b402-kamino-adapter/src/lib.rs:1899-1908
+pub fn derive_owner_pda(
+    adapter_program_id: &Pubkey,
+    viewing_pub_hash: &[u8; 32],
+    mint: &Pubkey,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[VERSION_PREFIX, SEED_ADAPTER_OWNER, viewing_pub_hash.as_ref(), mint.as_ref()],
+        adapter_program_id,
+    )
+}
+```
 
-| Visible | Hidden |
-|---|---|
-| Amount of the operation | Who deposited |
-| Adapter program (e.g. Jupiter) | Who receives the output note |
-| Fill venue (Phoenix, Raydium, etc.) | Linkage between the deposit and this action |
-| Relayer pubkey (paid the gas) | Your wallet address |
+The protocol's own state (Kamino `Obligation`, eventual Drift `User`,
+percolator slab account) records the adapter-derived `owner_pda`, not the
+trader's wallet. Two consequences:
 
-## What b402 defends against
+1. **Different traders → different PDAs by construction.** The PDA seeds
+   include `viewing_pub_hash` which is unique per shielded note holder.
+2. **Cross-protocol correlation is impossible from the PDA alone.** The
+   PDA is also scoped by `adapter_program_id`, so the same trader on the
+   Kamino adapter and the Drift adapter resolves to two unrelated
+   addresses — even an observer with both adapters' full state can't
+   join them on `owner_pda`.
 
-**Wallet-watching bots.** Bots that scrape the mempool or transaction history to copy trading strategies see the swap happen but can't attribute it to your wallet.
+### 4. Per-user state isolation on mainnet Kamino
 
-**MEV searchers.** On-chain DEX flows that would expose frontrunning targets are submitted through the relayer. Your wallet's balance history and trading patterns stay private.
+Each viewing key gets its own Kamino `Obligation` PDA, mediated by the
+adapter's `per_user_obligation` build (see
+[`programs/b402-kamino-adapter/src/lib.rs:222-239`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-kamino-adapter/src/lib.rs#L222-L239)
+for the per-user `remaining_accounts` layout that pins `OWNER_PDA` and
+`OWNER_USDC_ATA`). The previously-documented "everyone shares one
+obligation" risk no longer applies on the shipped mainnet adapter.
 
-**Surveillance-grade indexers.** Services like Chainalysis, Nansen, and Arkham build wallet-level histories by following on-chain edges between addresses. b402 breaks those edges at the shielded pool boundary.
+The `cpi-only` gate at
+[`programs/b402-kamino-adapter/src/lib.rs:353-371`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-kamino-adapter/src/lib.rs#L353-L371)
+is what makes per-user safe: it rejects any `execute()` invocation whose
+outer instruction is not the b402 pool program, so an attacker who reads
+a depositor's `viewing_pub_hash` off-chain cannot directly call the
+adapter's withdraw with that hash to drain the user.
 
-Layer 1 unlinkability is sufficient to defeat all three. An observer can see that *someone* swapped USDC for SOL through the b402 pool; they cannot determine that it was *your* wallet.
+## What's NOT hidden
 
-## What b402 does NOT fully defend against
+State each one specifically rather than under an "everything else" cover.
 
-<Warning>
-  Patient timing-and-amount correlation attacks remain a risk at low TVL. If an analyst knows that 1,000 USDC was deposited at time T and 1,000 USDC was unshielded shortly afterward with no other pool activity, they can infer a likely link.
+- **`viewing_pub_hash` linkability across the same user's ops.** The
+  shielded engine needs `viewing_pub_hash` (= `outSpendingPub[0]` in the
+  24-input vector — see
+  [`programs/b402-pool/src/instructions/adapt_execute.rs:88-95`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-pool/src/instructions/adapt_execute.rs#L88-L95))
+  to find a user's pending-inputs PDA and to derive their per-user
+  protocol PDAs. Two ops by the same trader against the same stateful
+  adapter share an `owner_pda`. This is **not a wallet link** — it's a
+  pseudonym shared across the user's own positions inside one protocol.
+- **Trade size, mint, slippage parameters.** Same exposure as any DEX.
+  `public_amount_in`, `expected_out_value`, and the IN/OUT mint Frs are
+  on the public-input vector
+  ([`adapt_execute.rs:1116-1163`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-pool/src/instructions/adapt_execute.rs#L1116-L1163)).
+- **Aggregate pool TVL by mint.** Each `vault` SPL TokenAccount is a
+  PDA-owned canonical account; balances are public.
+- **Network-layer metadata.** A relayer sees the user's IP unless the
+  user uses Tor. The protocol does not anonymize the network layer.
+- **Tx timing.** Small TVL = thin anonymity set. With pool throughput
+  measured in tens of ops/day, a user shielding 100 USDC and unshielding
+  99.95 USDC two minutes later collapses their own anonymity set to one.
+- **Anything the user discloses.** Viewing keys are user-sovereign; if a
+  user hands an auditor their viewing key, the auditor sees their notes.
+  No on-chain forced-disclosure mechanism.
 
-  This is a fundamental property of UTXO-mixer constructions — not specific to b402. The mitigation is a larger anonymity set: every additional user who shields strengthens privacy for all existing users. A soft TVL cap is enforced while the set grows.
-</Warning>
+## Two-artifact framing
 
-For autonomous agents and applications where the adversary is automated strategy-copying bots, not patient analysts running statistical attacks, Layer 1 is sufficient.
+The privacy claim decomposes into two properties, each backed by an
+on-chain artifact you can fetch and inspect.
 
-## Anonymity set
+### A. Tx-level wallet isolation
 
-Your privacy is bounded by how many independent notes exist in the pool at the time you spend. A pool with 10 notes gives an analyst a 1-in-10 chance to guess correctly by timing alone. A pool with 10,000 notes makes timing correlation far less useful.
+**Property.** A post-shield op transaction does not contain the trader's
+wallet pubkey in any account slot.
 
-b402 enforces a soft TVL cap while the anonymity set is small. As TVL grows and more wallets contribute notes, the pool approaches the same privacy characteristics as mature systems like Tornado Cash or Railgun on EVM chains.
+**Artifact.** Mainnet privateSwap tx
+[`5aVtM9Vc…sLKUhB`](https://solscan.io/tx/5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB).
+Signer: `7f6gRiX56dMQGrPERNBKuzFsvagFTM1U4LMAAN9rsiNM` (hosted relayer).
+Trader wallet: not present.
 
-The Merkle tree supports up to 2^26 (~67 million) leaves. Every shield adds one leaf, permanently growing the historical set.
+### B. Per-protocol state isolation
+
+**Property.** When a stateful adapter (Kamino, percolator, eventually
+Drift) writes per-user state in the downstream protocol, the recorded
+"owner" is a PDA derived from the trader's `viewing_pub_hash`, not their
+wallet.
+
+**Artifact.** Devnet percolator keystone tx
+[`2NwVGzPufiL7W4gneKgSjJNh9fKMnqwKYoL4heNawdWFHmdme6HjhCFzqdYf7i4NUmpCf6v3gUxBsHb4x6Wnb6ZR`](https://solscan.io/tx/2NwVGzPufiL7W4gneKgSjJNh9fKMnqwKYoL4heNawdWFHmdme6HjhCFzqdYf7i4NUmpCf6v3gUxBsHb4x6Wnb6ZR?cluster=devnet).
+The percolator slab account records the position owned by the
+b402-derived PDA, not by the funding wallet — same code path as the
+mainnet kamino artifact above, just with the percolator adapter program
+ID instead of the kamino adapter.
+
+Both artifacts exercise the same SDK call (`b402.adaptExecute`) into the
+same pool instruction (`adapt_execute_v2`) — only the adapter ID and the
+downstream CPI ladder differ.
+
+## Trust assumptions
+
+A short list of things this page assumes; full discussion in
+[/concepts/trust-assumptions](/concepts/trust-assumptions).
+
+- **Trusted setup.** The adapt VK in
+  [`programs/b402-verifier-adapt/src/vk.rs`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-verifier-adapt/src/vk.rs)
+  is from a single-contributor ceremony today. A multi-party ceremony is
+  on the roadmap.
+- **Hosted relayer.** Wallet-isolation (property A above) holds because
+  the relayer signs the post-shield op. A user who self-submits voids
+  property A — their wallet appears as the signer. The SDK currently
+  permits self-submission only on devnet for testing; mainnet flows go
+  through the hosted relayer.
+- **Light Protocol nullifier tree V2.** Nullifier inserts CPI into
+  `b402_nullifier::create_nullifier`, which writes into Light V2's
+  address tree. See the inline-CPI path in
+  [`programs/b402-pool/src/instructions/adapt_execute.rs:609-661`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-pool/src/instructions/adapt_execute.rs#L609-L661).
+  Privacy depends on Light's IMT continuing to admit valid nullifiers
+  without leaking the spent leaf index.

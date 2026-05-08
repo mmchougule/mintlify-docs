@@ -1,0 +1,99 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "b402-solana",
+  "logo": {
+    "light": "/logo/b402-full-logo.png",
+    "dark": "/logo/b402-full-logo.png"
+  },
+  "favicon": "/fav-icon.png",
+  "colors": {
+    "primary": "#F4B526",
+    "light": "#F4B526",
+    "dark": "#F4B526"
+  },
+  "theme": "venus",
+  "modeToggle": {
+    "default": "dark",
+    "isHidden": false
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/mmchougule/b402-solana"
+    },
+    {
+      "name": "b402.ai",
+      "url": "https://b402.ai"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get started",
+    "url": "/quickstart"
+  },
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "introduction",
+        "quickstart"
+      ]
+    },
+    {
+      "group": "Use it from an agent",
+      "pages": [
+        "mcp/overview",
+        "mcp/tools",
+        "mcp/claude-code-setup",
+        "mcp/cursor-setup",
+        "mcp/prompt-patterns"
+      ]
+    },
+    {
+      "group": "Use it from your code",
+      "pages": [
+        "sdk/installation",
+        "sdk/shield-unshield",
+        "sdk/private-actions",
+        "sdk/scanner"
+      ]
+    },
+    {
+      "group": "Adapters",
+      "pages": [
+        "adapters/overview",
+        "adapters/jupiter",
+        "adapters/kamino",
+        "adapters/percolator",
+        "adapters/building-an-adapter"
+      ]
+    },
+    {
+      "group": "How it works",
+      "pages": [
+        "concepts/composability",
+        "concepts/privacy-model",
+        "concepts/shielded-pool",
+        "concepts/trust-assumptions",
+        "protocol/architecture",
+        "protocol/pool-program",
+        "protocol/circuits",
+        "protocol/verifier",
+        "protocol/nullifier-tree",
+        "protocol/nullifier-program"
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "reference/program-ids",
+        "reference/instruction-reference",
+        "reference/error-codes",
+        "reference/metrics",
+        "reference/faq"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/mmchougule/b402-solana"
+  }
+}

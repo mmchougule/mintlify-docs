@@ -1,85 +1,91 @@
 ---
-title: "What is b402? Private DeFi on Solana"
-description: "b402 adds private swaps, lending, and transfers to Solana apps. Shield tokens once and trade or lend without your wallet appearing on-chain."
+title: Introduction
+description: "Composable confidential DeFi on Solana — shielded pool + per-protocol adapters for Jupiter, Kamino, percolator, and beyond."
 ---
 
-b402 is a TypeScript SDK for composable confidential DeFi on Solana. This page explains what b402 does, what is deployed on mainnet today, and how its components fit together. If you want to jump straight to code, head to the [Quickstart](/quickstart).
+`b402-solana` is a confidential DeFi layer for Solana. Shield USDC
+into a ZK pool, then swap, lend, or open a perp through any
+registered adapter — atomically, in one transaction — without your
+wallet appearing on the post-shield tx. Each downstream protocol
+records you as a PDA derived from a private spending key, not as a
+wallet. That last sentence is the design choice that lets this work
+on SVM. The trust posture is in
+[Trust assumptions](/concepts/trust-assumptions); the cryptography is
+standard Groth16-over-BN254 with a single-contributor Phase-2 today.
 
-## What b402 does
+## What it looks like on chain
 
-b402 gives your application a shielded balance that participates in DeFi without exposing your wallet as the executing party. You deposit tokens once — that shield transaction links your wallet to an amount, and that is the last time your address appears. Every action after that (swap, lend, withdraw) is signed by the b402 relayer, not you.
+A `privateSwap` (Jupiter route + Kamino lend, **one transaction**) on
+mainnet:
 
-- **Shield** USDC or wSOL from your wallet into the b402 pool.
-- **Swap privately** through Jupiter routing — the on-chain swap transaction contains the relayer's pubkey, the adapter program, and the Jupiter route, but not your wallet.
-- **Lend on Kamino** from your shielded balance into any Kamino reserve. Each viewing key gets its own Kamino `Obligation`, so positions are unlinkable across users.
-- **Unshield to any address** — there is no on-chain edge connecting the withdrawal to the original deposit.
+```
+5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB
+```
+
+[solscan](https://solscan.io/tx/5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB)
+· `solana confirm 5aVtM9Vc… -u mainnet-beta -v`
+
+Trace it: a relayer pubkey paid the fee, routed through Jupiter, then
+landed in Kamino. The user who triggered the swap doesn't appear in
+any account slot. **That's the property the proof binds.** Most
+privacy projects can't show this on chain because they're testnet —
+this composes Jupiter and Kamino in one shielded transaction, today,
+on Solana mainnet.
+
+## Two ways to call it
+
+<CardGroup cols={2}>
+  <Card title="From your code" icon="code" href="/sdk/installation">
+    ```bash
+    npm install @b402ai/solana
+    ```
+    `b402.shield(...)`, `b402.swap(...)`, `b402.lend(...)`,
+    `b402.redeem(...)`, `b402.unshield(...)` — five high-level methods.
+    Hosted relayer + circuit auto-load are pre-wired for mainnet.
+  </Card>
+  <Card title="From an AI agent" icon="robot" href="/mcp/overview">
+    ```bash
+    npx -y @b402ai/solana-mcp --install
+    ```
+    Registers the b402 MCP server with Claude Code, Cursor, or any
+    MCP client. Eleven tools, mainnet defaults. Built agent-first.
+  </Card>
+</CardGroup>
+
+## What's shipped
+
+| Surface | Where |
+|---|---|
+| Shield / unshield | mainnet |
+| Private swap (Jupiter V6) | mainnet |
+| Private lend / redeem (Kamino, per-user Obligation) | mainnet |
+| Private perp open / close (percolator) | devnet |
+
+Multi-output adapters (whirlpool LP, two-asset unwinds), async
+adapters (Jupiter Perps), and NFT-position adapters need the next ABI
+revision — designed in PRDs, not yet in code.
 
 <Note>
-  Only `shield` requires your wallet signature. All other operations — `swap`, `lend`, `redeem`, `unshield` — are submitted by the hosted relayer. The relayer pays gas on your behalf.
+  **Mainnet beta.** Pool, verifiers, and adapters are deployed under
+  Apache 2.0. Trusted setup is single-contributor today; multi-party
+  ceremony and external audit are the next hardening steps. Full risk
+  framing in [Trust assumptions](/concepts/trust-assumptions).
 </Note>
 
-## What is live on mainnet
+## Where to go next
 
-The following programs are deployed and operational on Solana mainnet.
-
-| Program | ID |
-|---|---|
-| Pool | `42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y` |
-| Verifier (transact) | `Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK` |
-| Verifier (adapt) | `3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae` |
-| Jupiter adapter | `3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7` |
-| Kamino adapter | `2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX` |
-
-The `private_swap`, `private_lend`, and `private_redeem` flows have been verified end-to-end on mainnet with finalized signatures.
-
-## Supported tokens
-
-On mainnet, b402 whitelists two mints:
-
-| Token | Mint address |
-|---|---|
-| USDC | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
-| wSOL | `So11111111111111111111111111111111111111112` |
-
-On devnet, a mock adapter is deployed for client wiring tests without real funds.
-
-## Adapter status
-
-| Adapter | Status | What it enables |
-|---|---|---|
-| Jupiter v6 | Live on mainnet | Private swap on any Jupiter route |
-| Kamino lend | Live on mainnet | Private deposit + redeem on USDC reserve, per-user obligation |
-| Mock | Live on devnet | Adapter ABI invariant tests |
-| Adrena perps | Scaffold | Private leveraged trading |
-| Orca LP | Scaffold | Private whirlpool positions |
-| Jupiter perps | Scaffold | Private perps via JLP |
-
-## Architecture
-
-b402 has four main components.
-
-**Pool program** — the on-chain UTXO pool. It maintains a Merkle commitment tree and a nullifier set. Every shield creates a new commitment leaf. Every spend proves a nullifier has not been seen before.
-
-**Verifier programs** — two Groth16 verifiers (one for plain transfers, one for adapter-bound swaps and lending). They are called by the pool program via CPI and verify the zero-knowledge proof before any state change is applied.
-
-**Adapters** — registered Anchor programs that receive a CPI from the pool. Jupiter and Kamino adapters are live. Adding a new protocol is one Anchor crate (~200–300 lines) implementing the `execute(action_payload)` ABI plus a registry entry — no circuit recut or ceremony required.
-
-**Relayer** — a hosted Cloud Run service that submits unshield, swap, lend, and redeem transactions on behalf of users. The relayer's pubkey appears on-chain as the fee payer; the depositor's wallet does not. The SDK defaults to the hosted relayer automatically.
-
-<Info>
-  The entire shielded-swap or shielded-deposit flow is one instruction in one versioned transaction with one signature. An Address Lookup Table compresses every common account (pool program, both verifiers, USDC and wSOL mints, system and token programs, b402 vaults) from 32-byte inline pubkeys to 1-byte ALT indexes.
-</Info>
-
-## Next steps
-
-<CardGroup cols={3}>
+<CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Shield USDC and make a private swap in five minutes.
+    Install the SDK or the MCP server and move USDC privately.
   </Card>
-  <Card title="SDK reference" icon="code" href="/reference/sdk-methods">
-    Full method surface for the B402Solana class.
+  <Card title="Privacy model" icon="user-secret" href="/concepts/privacy-model">
+    What's hidden, what isn't, with the on-chain artifacts that prove it.
   </Card>
-  <Card title="MCP tools" icon="robot" href="/reference/mcp-tools">
-    Use b402 from Claude Code or Cursor with no code required.
+  <Card title="Composability" icon="diagram-project" href="/concepts/composability">
+    The adapter ABI: 24 public inputs, the wire format, and the
+    `cpi-only` security gate.
+  </Card>
+  <Card title="Build an adapter" icon="hammer" href="/adapters/building-an-adapter">
+    Add your protocol behind the shielded pool.
   </Card>
 </CardGroup>

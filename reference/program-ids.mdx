@@ -1,88 +1,258 @@
 ---
-title: "b402 on-chain program IDs and addresses"
-description: "All deployed b402 program IDs on Solana mainnet and devnet: pool, verifiers, Jupiter adapter, Kamino adapter, and the Address Lookup Table."
+title: Program IDs
+description: "Programs deployed on Solana mainnet and devnet, with mainnet build provenance + proof-of-life txs."
 ---
 
-b402 is deployed across several programs on Solana mainnet. The pool holds shielded commitments; the verifiers enforce zero-knowledge proof correctness; the adapters route private execution to Jupiter, Kamino, and other protocols; and the Address Lookup Table compresses account metas so that the heaviest `adapt_execute` transaction fits within Solana's 1,232-byte wire limit.
+Mainnet pool + verifier + nullifier + Kamino adapter went live
+Phase 7B 2026-04-30 and were upgraded to the Phase 9 dual-note pool
+shortly after. Same program IDs are used on devnet and mainnet —
+that's intentional. Localnet IDs are keypair-derived per operator
+(gitignored).
 
-## Mainnet programs
+## Programs (devnet + mainnet)
 
-| Program | ID |
+| Program | Program ID | Status | Source |
+|---|---|---|---|
+| `b402_pool` | `42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y` | mainnet + devnet | [`programs/b402-pool/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-pool) |
+| `b402_verifier_transact` | `Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK` | mainnet + devnet | [`programs/b402-verifier-transact/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-verifier-transact) |
+| `b402_verifier_adapt` | `3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae` | mainnet + devnet | [`programs/b402-verifier-adapt/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-verifier-adapt) |
+| `b402_nullifier` | `2AnRZwWu6CTurZs1yQpqrcJWo4yRYL1xpeV78b2siweq` | mainnet + devnet | [`programs/b402-nullifier/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-nullifier) |
+| `b402_jupiter_adapter` | `3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7` | mainnet + devnet | [`programs/b402-jupiter-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-jupiter-adapter) |
+| `b402_kamino_adapter` | `2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX` | mainnet + devnet | [`programs/b402-kamino-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-kamino-adapter) |
+| `b402_mock_adapter` | `89kw33YDcbXfiayVNauz599LaDm51EuU8amWydpjYKgp` | test-only (never on mainnet) | [`programs/b402-mock-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-mock-adapter) |
+| `b402_adrena_adapter` | `9aUp3UKHk4JuHsLJm33Why7RhuW6CQCyQh6UEJeynKKZ` | scaffolded — not deployed | [`programs/b402-adrena-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-adrena-adapter) |
+| `b402_orca_adapter` | `DsyuZDwGPryBNK3aAUG4TTx9P5kxk4tbU7aD3DYRvQhT` | scaffolded — not deployed | [`programs/b402-orca-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-orca-adapter) |
+| `b402_jupiter_perps_adapter` | `GRAiy9K5w2GCbicwJKNbKzaKRcr3PmvSqYGp4XZgfBYm` | scaffolded — not deployed | [`programs/b402-jupiter-perps-adapter/`](https://github.com/mmchougule/b402-solana/tree/main/programs/b402-jupiter-perps-adapter) |
+
+Canonical IDs are mirrored in
+[`packages/shared/src/constants.ts`](https://github.com/mmchougule/b402-solana/blob/main/packages/shared/src/constants.ts)
+(`PROGRAM_IDS`) and
+[`Anchor.toml`](https://github.com/mmchougule/b402-solana/blob/main/Anchor.toml).
+The SDK reads `PROGRAM_IDS` directly — IDs aren't duplicated in
+client code.
+
+The mainnet upgrade authority for all six deployed programs is
+`4ym542u1DuC2i9hVxnr2EAdss8fHp4Rf4RFnyfqfy82t`. Verify with:
+
+```bash
+solana program show 42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y -u mainnet-beta
+```
+
+## Build provenance
+
+Mainnet binaries are built with explicit Cargo features. Use the same
+feature string when reproducing bytecode from a tagged SHA.
+
+[`scripts/build-all.sh`](https://github.com/mmchougule/b402-solana/blob/main/scripts/build-all.sh)
+is a convenience wrapper that runs `cargo build-sbf` **without**
+`--features` — fine for local `.so` iteration, but **not** a faithful
+reproduction of what shipped on mainnet. After checkout, run
+`cargo build-sbf --tools-version v1.54 --manifest-path
+programs/<crate>/Cargo.toml --features '<comma-separated>'` using the
+table below (same ordering as
+[`ops/prd-35-mainnet-deploy.sh`](https://github.com/mmchougule/b402-solana/blob/main/ops/prd-35-mainnet-deploy.sh)
+for verifier-adapt + pool, and
+[`README.md`](https://github.com/mmchougule/b402-solana/blob/main/README.md)
+for Kamino `per_user_obligation,cpi-only`).
+
+| Program | Features |
 |---|---|
-| Pool | `42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y` |
-| Verifier (transact) | `Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK` |
-| Verifier (adapt) | `3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae` |
-| Jupiter adapter | `3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7` |
-| Kamino adapter | `2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX` |
-| Mock adapter | `89kw33YDcbXfiayVNauz599LaDm51EuU8amWydpjYKgp` |
-| b402 ALT (16 entries) | `9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj` |
+| `b402-pool` | `prd_35_pending_inputs,inline_cpi_nullifier,phase_9_dual_note` |
+| `b402-verifier-adapt` | `phase_9_dual_note` |
+| `b402-nullifier` | `cpi-only` |
+| `b402-kamino-adapter` | `per_user_obligation,cpi-only` |
+| `b402-verifier-transact` | (none) |
+| `b402-jupiter-adapter` | (none) |
 
-<Note>
-  The mock adapter (`89kw33...`) is deployed to devnet only and is used for adapter ABI invariant tests. Do not reference it in production integrations.
-</Note>
+Mismatched features = mismatched wire format. Borsh deserialization
+in the SDK will reject misaligned binaries (Anchor error code 102 /
+`InstructionDidNotDeserialize`).
 
-### Pool
+The `cpi-only` feature on `b402-nullifier` is enforced by
+[`programs/b402-nullifier/src/lib.rs:96-114`](https://github.com/mmchougule/b402-solana/blob/main/programs/b402-nullifier/src/lib.rs#L96-L114):
+the program rejects any direct invocation and any CPI whose top-level
+caller is not `b402_pool` (`42a3hsCXt…`). Nullifier address derivation
+mixes `SEED_NULL = b"b402/v1/null"` with the program ID, matching
+`DomainTags.nullifier` in
+[`packages/shared/src/constants.ts:18`](https://github.com/mmchougule/b402-solana/blob/main/packages/shared/src/constants.ts#L18).
 
-`42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y`
+## Hosted relayer
 
-The central pool program. Manages the Merkle commitments tree, dispatches adapter CPIs via `adapt_execute`, verifies Groth16 proofs through the verifier programs, and enforces post-CPI balance deltas.
+The b402 hosted relayer pays SOL fees for shielded post-shield ops on
+mainnet (private swap, private lend, private redeem, private perp
+once shipped). Signer pubkey:
 
-### Verifier (transact)
+```
+7f6gRiX56dMQGrPERNBKuzFsvagFTM1U4LMAAN9rsiNM
+```
 
-`Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK`
+The SDK auto-routes through the hosted relayer when configured for
+mainnet (default in `B402Solana`). For self-submit or a custom
+relayer, see `packages/relayer/` in the repo.
 
-Groth16 BN254 verifier for the transact circuit (18 public inputs). Used by `shield` and `unshield` to verify spend proofs.
+## Proof-of-life — mainnet
 
-### Verifier (adapt)
+Phase 9 dual-note pool is live. Two anchor txs, both signed by the
+hosted relayer (not the user wallet):
 
-`3Y2tyhNSaUiW5AcZcmFGRyTMdnroxHxc5GqFQPcMTZae`
+### Private swap (Kamino, single tx, Jupiter route + Kamino lend)
 
-Groth16 BN254 verifier for the adapt circuit (23 public inputs). Used by `adapt_execute` (`swap`, `lend`, `redeem`) to verify adapter binding proofs.
+```
+5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB
+```
 
-### Jupiter adapter
+[solscan](https://solscan.io/tx/5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB)
+· verify locally:
 
-`3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7`
+```bash
+solana confirm 5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB \
+  -u mainnet-beta -v
+```
 
-CPI adapter that forwards the `action_payload` (Jupiter swap instruction bytes) to Jupiter v6. Handles any Jupiter-routed pair. Used by `b402.swap()` on mainnet.
+### `AdaptExecuteV2` with `cpi-only` nullifier path
 
-### Kamino adapter
+Pool `AdaptExecuteV2` → `b402_verifier_adapt::VerifyWithAccountInputs`
+→ `b402_nullifier::CreateNullifier` (CPI-gated, rejects callers that
+aren't `b402_pool`):
 
-`2enwFgcGKJDqruHpCtvmhtxe3DYcV3k72VTvoGcdt2rX`
+```
+2GfCe15oiVniHemqLG4D4eH9jBhJo8LAq3AVcAoRzknDxWfsPCPEkgnZ29xBHZubpaJAG6b4QSCoCivgmG3P3Buh
+```
 
-CPI adapter for Kamino V2 lending. Supports per-user obligations keyed on the viewing key's spending public key, and runs up to 7 nested Kamino CPIs in a single transaction. Used by `b402.lend()` and `b402.redeem()`.
+[solscan](https://solscan.io/tx/2GfCe15oiVniHemqLG4D4eH9jBhJo8LAq3AVcAoRzknDxWfsPCPEkgnZ29xBHZubpaJAG6b4QSCoCivgmG3P3Buh)
+· verify locally:
 
-### b402 Address Lookup Table
+```bash
+solana confirm 2GfCe15oiVniHemqLG4D4eH9jBhJo8LAq3AVcAoRzknDxWfsPCPEkgnZ29xBHZubpaJAG6b4QSCoCivgmG3P3Buh \
+  -u mainnet-beta -v
+```
 
-`9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj`
+### CommitInputs (PRD-35 pending-inputs path)
 
-A 16-entry Address Lookup Table that compresses frequently used account addresses (pool program, both verifiers, USDC and wSOL mints, system and token programs, b402 vaults) from 32-byte inline pubkeys to 1-byte ALT indexes. This is what allows the full `adapt_execute` flow to fit in a single v0 transaction under Solana's 1,232-byte wire limit.
+```
+4zX5v63xuuFzbwDgiaWWeFV2N3uzGTnUpvKCnZzUizbwHNsFAAYFPMYJ2wc3PZmTNyH43PYL1Y4eHqpKQr1Ba2V1
+```
 
-<Note>
-  If you extend the pool with a custom adapter and its route references additional accounts, extend the b402 ALT with those accounts rather than passing them as static account metas. Passing custom ALTs without also including the b402 ALT will cause the transaction to exceed the size limit.
-</Note>
+[solscan](https://solscan.io/tx/4zX5v63xuuFzbwDgiaWWeFV2N3uzGTnUpvKCnZzUizbwHNsFAAYFPMYJ2wc3PZmTNyH43PYL1Y4eHqpKQr1Ba2V1)
 
----
+To find more, query the relayer's recent signatures:
 
-## Hosted services
+```bash
+solana transaction-history 7f6gRiX56dMQGrPERNBKuzFsvagFTM1U4LMAAN9rsiNM \
+  -u mainnet-beta --limit 25
+```
 
-| Service | URL |
+## Proof-of-life — public devnet (percolator perp open)
+
+Single signed tx, full path:
+
+```
+pool::AdaptExecuteV2
+  → b402_verifier_adapt (Groth16 over 23 public inputs)
+  → b402_nullifier::CreateNullifier
+  → SPL token transfer (collateral → percolator)
+  → percolator-prog::InitUser + DepositCollateral + TradeCpi
+  → matcher
+```
+
+```
+2NwVGzPufiL7W4gneKgSjJNh9fKMnqwKYoL4heNawdWFHmdme6HjhCFzqdYf7i4NUmpCf6v3gUxBsHb4x6Wnb6ZR
+```
+
+[explorer](https://explorer.solana.com/tx/2NwVGzPufiL7W4gneKgSjJNh9fKMnqwKYoL4heNawdWFHmdme6HjhCFzqdYf7i4NUmpCf6v3gUxBsHb4x6Wnb6ZR?cluster=devnet)
+
+The percolator perp adapter is devnet-only at this commit; its
+mainnet deploy gates on PRD-15 dual-vault delta-invariant landing.
+
+## Whitelisted mints (mainnet)
+
+Native USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` and native
+wSOL `So11111111111111111111111111111111111111112` are configured at
+deploy time. Adding a mint runs `add_token_config` on the pool — no
+program upgrade required, since `tokenMint` is a runtime variable in
+the transact circuit (public-input index 7 per
+`TRANSACT_PUBLIC_INPUT_ORDER` in
+[`packages/shared/src/constants.ts:97-117`](https://github.com/mmchougule/b402-solana/blob/main/packages/shared/src/constants.ts#L97-L117)).
+
+## Address Lookup Table (ALT)
+
+The SDK uses an ALT to compress stable high-frequency accounts
+(programs, protocol PDAs, common mints, adapter scratch ATAs) from
+32 B to 1 B per reference inside `adapt_execute` txs — required to
+fit Jupiter routes under Solana's 1,232 B tx-size cap (PRD-04 §5.2).
+
+| Cluster | ALT address |
 |---|---|
-| Mainnet relayer | `https://b402-solana-relayer-mainnet.run.app` |
+| mainnet | `3TSPLsa8aM5Xg9n8EHMuV5SK85RuMP96veFjv4BVrK9f` |
+| devnet | `9FPYufa1KDkrn1VgfjkR7R667hbnTA7CNtmy38QcsuNj` |
 
-The hosted relayer is the default fee payer for `unshield`, `swap`, `lend`, and `redeem` on mainnet. It signs those transactions so your wallet does not appear as the executing party. You can self-host a relayer or pass your own keypair as `relayer` in the `B402Solana` constructor if you prefer not to use the hosted service.
+Constants live in
+[`packages/shared/src/constants.ts`](https://github.com/mmchougule/b402-solana/blob/main/packages/shared/src/constants.ts)
+as `B402_ALT_MAINNET` and `B402_ALT_DEVNET`. SDK clients pick the
+right one automatically from the cluster passed to `B402Solana`.
 
----
+## Localnet
 
-## Adapter status
+`./ops/local-validator.sh --reset` boots `solana-test-validator` with
+all programs at deterministic IDs derived from keypairs in
+`ops/keypairs/` (gitignored). Localnet IDs differ per operator;
+reference them via `Anchor.toml` rather than hard-coding. The
+`[programs.localnet]` block currently pins:
 
-| Adapter | Status | What it enables |
-|---|---|---|
-| Jupiter v6 | Mainnet, live | Private swap on any Jupiter-routed pair |
-| Kamino lend | Mainnet, live — USDC reserve, per-user obligation | Private deposit into Kamino; redeem reshields the underlying |
-| Mock | Devnet only | Adapter ABI invariant testing (constant 2x output) |
-| Adrena perps | Scaffold | Private leveraged trading |
-| Orca LP | Scaffold | Private Whirlpool LP positions |
-| Jupiter perps | Scaffold | Private perps via JLP (pending v2 ABI two-phase claim) |
-| Drift perps | Spec only | Deferred pending Drift's post-hack reboot |
+```toml
+b402_pool              = "42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y"
+b402_verifier_transact = "Afjbnv2Ekxa98jjRw33xPPhZabevek2uZxoE75kr6ZrK"
+b402_jupiter_adapter   = "3RHRcbinCmcj8JPBfVxb9FW76oh4r8y21aSx4JFy3yx7"
+```
 
-Adding a new adapter requires only a single Anchor crate (~200–300 LoC) implementing the `execute(action_payload)` ABI and a registry entry. No circuit changes, no new ceremony, and no pool upgrade are needed.
+(Operators who hold the matching keypairs deploy at the same IDs;
+others get fresh keypair-derived IDs.)
+
+## Anchor IDLs
+
+```
+target/idl/b402_pool.json
+target/idl/b402_verifier_transact.json
+target/idl/b402_verifier_adapt.json
+target/idl/b402_nullifier.json
+target/idl/b402_jupiter_adapter.json
+target/idl/b402_kamino_adapter.json
+target/idl/b402_mock_adapter.json
+```
+
+Generated on `anchor build` and consumed by the SDK for instruction
+encoding. IDLs are committed so consumers don't need to rebuild.
+
+## Verifying a deployed binary against source
+
+```bash
+# 1. Build the program for SBF at the same toolchain version as the
+#    mainnet binary.
+cargo build-sbf --tools-version v1.54 \
+  --manifest-path programs/b402-pool/Cargo.toml \
+  --features prd_35_pending_inputs,inline_cpi_nullifier,phase_9_dual_note
+
+sha256sum target/deploy/b402_pool.so
+
+# 2. Pull the on-chain program data and hash it.
+solana -u mainnet-beta program dump \
+  42a3hsCXtQLWonyxWZosaaCJCweYYKMrvNd25p1Jrt2y \
+  /tmp/onchain.so
+sha256sum /tmp/onchain.so
+```
+
+Hashes match modulo Anchor's metadata trailer. Reproducible-build
+flags (e.g. `cargo-build-bpf --verifiable`) get you bit-for-bit
+matching when available.
+
+## Migration policy
+
+When the pool's program ID changes, the migration policy from
+[`PRD-01 §4.4`](https://github.com/mmchougule/b402-solana/blob/main/docs/prds/PRD-01-architecture.md#44-migration-policy)
+applies:
+
+1. Old pool stays operational so users can always exit.
+2. New pool deploys with new program ID + new verifier.
+3. SDK exposes a `migrationUnshield` flow that proves ownership in
+   the old pool and shields into the new pool atomically.
+4. Migration is opt-in.

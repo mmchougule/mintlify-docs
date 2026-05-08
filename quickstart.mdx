@@ -1,164 +1,99 @@
 ---
-title: "Get started with b402 in 5 minutes"
-description: "Learn to shield USDC into the b402 pool and execute a private swap in a few lines of TypeScript. The hosted mainnet relayer pays gas for you."
+title: Quickstart
+description: "Install the SDK or the MCP server and move USDC privately in under a minute."
 ---
 
-This guide walks you through installing the SDK, creating a `B402Solana` instance, shielding USDC into the pool, and executing a private swap. By the end you will have a working TypeScript snippet that runs against the b402 mainnet pool using the hosted relayer — no relayer configuration required.
+Two paths. Pick one.
 
-## Prerequisites
+## From your code
 
-Before you start, make sure you have:
+```bash
+npm install @b402ai/solana
+```
 
-- **Node.js 20 or later** — the SDK uses native `crypto.getRandomValues`, available in Node 18+ but best supported in Node 20.
-- **A Solana keypair** — the default path is `~/.config/solana/id.json`. This wallet signs the initial shield transaction only.
-- **USDC or wSOL on mainnet** — the two mints whitelisted in the current pool deployment. You need at least the amount you plan to shield.
-- **A private RPC URL** — the public `api.mainnet-beta.solana.com` endpoint rate-limits aggressively. Use a provider such as Helius, Triton, QuickNode, or Alchemy.
-
-<Warning>
-  Never commit your keypair file or RPC URL to version control. Use environment variables for both.
-</Warning>
-
-## Steps
-
-<Steps>
-  <Step title="Install the SDK">
-    Add `@b402ai/solana` to your project.
-
-    ```bash
-    npm install @b402ai/solana
-    ```
-  </Step>
-
-  <Step title="Import and construct B402Solana">
-    Create a `B402Solana` instance with your cluster, RPC URL, and keypair. The hosted relayer URL is applied automatically for `mainnet` and `devnet` — you do not need to set `relayerHttpUrl` unless you want to override it.
-
-    ```typescript
-    import { Keypair, PublicKey } from '@solana/web3.js';
-    import { B402Solana } from '@b402ai/solana';
-
-    const b402 = new B402Solana({
-      cluster: 'mainnet',
-      rpcUrl: process.env.RPC_URL!,   // Helius / Triton / your own
-      keypair: yourKeypair,            // user signs the initial shield only
-    });
-    ```
-  </Step>
-
-  <Step title="Call ready()">
-    `ready()` fetches the Groth16 circuit artifacts (~36 MB) on first call, SHA256-verifies them, and caches them at `~/.b402ai/circuits`. Subsequent calls return immediately from cache.
-
-    ```typescript
-    await b402.ready();
-    ```
-  </Step>
-
-  <Step title="Shield tokens">
-    Move public USDC into the b402 shielded pool. Your wallet signs this one transaction. After this point, no further transaction references your wallet.
-
-    ```typescript
-    const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-
-    await b402.shield({ mint: USDC, amount: 1_000_000n }); // 1 USDC (6 decimals)
-    ```
-
-    The deposit amount is visible on-chain. The link between your wallet and any subsequent spending is not.
-  </Step>
-
-  <Step title="Execute a private swap">
-    Call `swap()` to exchange the shielded USDC for wSOL via Jupiter. The hosted relayer signs and pays gas. Your wallet does not appear on this transaction.
-
-    ```typescript
-    const SOL = new PublicKey('So11111111111111111111111111111111111111112');
-
-    const { signature, outAmount } = await b402.swap({
-      inMint: USDC,
-      outMint: SOL,
-      amount: 1_000_000n,
-    });
-
-    console.log('swap finalized:', signature);
-    console.log('received (lamports):', outAmount.toString());
-    ```
-  </Step>
-</Steps>
-
-## Complete example
-
-The following is the full working snippet from [`docs/getting-started.md`](https://github.com/mmchougule/b402-solana/blob/main/docs/getting-started.md):
-
-```typescript
-import { Keypair, PublicKey } from '@solana/web3.js';
+```ts
 import { B402Solana } from '@b402ai/solana';
-
-const b402 = new B402Solana({
-  cluster: 'mainnet',
-  rpcUrl: process.env.RPC_URL!,        // Helius / Triton / your own
-  keypair: yourKeypair,                 // user signs the initial shield only
-});
-await b402.ready();   // first call fetches circuit artifacts (~36MB,
-                       // SHA256-verified, cached at ~/.b402ai/circuits)
+import { Keypair, PublicKey } from '@solana/web3.js';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const SOL  = new PublicKey('So11111111111111111111111111111111111111112');
 
-// Move public USDC into the shielded pool (one-time, user signs).
-await b402.shield({ mint: USDC, amount: 1_000_000n });
+const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(
+  fs.readFileSync(`${os.homedir()}/.config/solana/id.json`, 'utf8'))));
 
-// Private swap — relayer signs + pays gas. Caller wallet stays off-chain.
-const { signature, outAmount } = await b402.swap({
-  inMint: USDC,
-  outMint: SOL,
-  amount: 1_000_000n,
-});
+const b402 = new B402Solana({ cluster: 'mainnet', keypair });
+await b402.ready();
+
+await b402.shield({ mint: USDC, amount: 1_000_000n });   // shield 1 USDC
+await b402.swap({ inMint: USDC, outMint: SOL, amount: 1_000_000n });
 ```
 
-You can run the full quickstart script directly from the repo:
+Three real network calls — shield, swap, done. The hosted relayer
+pays SOL for the swap; you pay only for the shield deposit.
+
+For lend / redeem / unshield see [`b402.lend` /
+`b402.redeem`](/sdk/private-actions) and
+[`b402.unshield`](/sdk/shield-unshield).
+
+## From an AI agent
 
 ```bash
-git clone https://github.com/mmchougule/b402-solana
-cd b402-solana
-pnpm install
-B402_RPC_URL='https://mainnet.helius-rpc.com/?api-key=...' \
-  pnpm exec node --experimental-strip-types examples/quickstart-private-swap.ts
+npx -y @b402ai/solana-mcp --install
 ```
 
-## What just happened
+That command writes the b402 MCP entry into your Claude Code, Cursor,
+or Claude Desktop config and exits. Restart the runtime, then ask:
 
-Understanding the two operations helps you reason about the privacy model.
+> Shield 1 USDC and swap to SOL privately.
 
-**`shield`** moves your tokens from a public wallet into the b402 pool. The pool records a Poseidon commitment to a new UTXO note in its on-chain Merkle tree. Your wallet signs this transaction, so the deposit amount is linked to your address. After this, no further transaction references your wallet.
+Eleven tools are exposed — `status`, `balance`, `shield`, `unshield`,
+`private_swap`, `private_lend`, `private_redeem`, `quote_swap`,
+`watch_incoming`, `holdings`, `wallet_balance`. Mainnet defaults; no
+RPC config required for first run.
 
-**`swap`** builds an adapter instruction that binds a Groth16 proof to the Jupiter adapter ID, the route hash, and the expected output. The pool's `adapt_execute` instruction verifies the proof on-chain, calls the Jupiter adapter via CPI, and mints a new shielded note for the output amount. The b402 hosted relayer submits this transaction — your wallet does not appear.
+See [MCP overview](/mcp/overview) for the full tool list and
+[Prompt patterns](/mcp/prompt-patterns) for compose-able multi-step
+prompts (shield → swap → lend → redeem → unshield in one
+conversation).
 
-### What is visible vs hidden
+## Verify a real one
 
-| Visible on-chain | Hidden |
-|---|---|
-| Amount of the swap | Who deposited |
-| Adapter program (Jupiter) | Who receives the output note |
-| Fill venue (Phoenix, Raydium, …) | Link between USDC deposit and SOL output |
-| Relayer pubkey (paid the gas) | Your wallet address |
+A mainnet `privateSwap` you can fetch right now:
 
-## Proof it works — mainnet signatures
+```bash
+solana confirm 5aVtM9Vc3eSgakTwv8vNG2snokQCWZhc8D6vfLTYigJRTkW2eZ8Ymv5gYawD81qCfAyj3KzhvHJqvGA1znpLKUhB \
+  -u mainnet-beta -v
+```
 
-The following signatures are from a recent run against the mainnet pool:
+The signer is the b402 hosted relayer
+(`7f6gRiX56dMQGrPERNBKuzFsvagFTM1U4LMAAN9rsiNM`); the user who
+triggered the swap is not present in the account list. That's the
+on-chain shape of the property.
 
-- **Shield:** `3HaqLAX76Ff2dh...LNXb` — Finalized
-- **Swap:** `4cWaWAY1wd3hM...sXt` — Finalized — 50,000 raw USDC → 564,337 lamports SOL via Jupiter → Raydium
+## What you'll need
 
-## Next steps
+- A Solana keypair at `~/.config/solana/id.json` (the SDK reads it
+  by default; override with `keypair` constructor arg).
+- For mainnet flows: a small SOL balance to pay the shield deposit.
+  Post-shield ops are relayer-paid.
+- Node 20+ for the SDK; an MCP-compatible runtime for the agent
+  path.
+
+## Where to go next
 
 <CardGroup cols={2}>
-  <Card title="Install and configure" icon="gear" href="/installation">
-    All constructor options, environment variables, and the MCP server path.
+  <Card title="SDK actions" icon="code" href="/sdk/private-actions">
+    Every method on `B402Solana`: shield, swap, lend, redeem, unshield.
   </Card>
-  <Card title="Private lending" icon="piggy-bank" href="/guides/private-lend">
-    Deposit shielded USDC into Kamino and redeem your position privately.
+  <Card title="MCP tools" icon="robot" href="/mcp/tools">
+    All 11 agent tools, with input / output schemas.
   </Card>
-  <Card title="Unshield to any address" icon="arrow-right" href="/guides/unshield">
-    Withdraw tokens to a fresh wallet with no on-chain link to your deposit.
+  <Card title="Privacy model" icon="user-secret" href="/concepts/privacy-model">
+    What's hidden, what isn't, and the on-chain artifacts that prove it.
   </Card>
-  <Card title="SDK method reference" icon="code" href="/reference/sdk-methods">
-    Full API surface for B402Solana including balance, holdings, and status.
+  <Card title="Build an adapter" icon="hammer" href="/adapters/building-an-adapter">
+    Add your protocol behind the shielded pool.
   </Card>
 </CardGroup>
